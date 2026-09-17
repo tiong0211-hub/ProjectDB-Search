@@ -28,3 +28,22 @@ def test_keyword_matches_loose_tolerates_typos():
     inverted = build_inverted_index([_record("d1", keywords=["datasheet"])])
 
     assert inverted.keyword_matches_loose("datasheat") == ["d1"]
+
+
+def test_many_documents_sharing_a_field_value_and_keyword_are_all_indexed():
+    # Regression test for a real O(n^2) bug: build_inverted_index used to
+    # dedupe each bucket with `if doc_id not in a_list`, which is O(bucket
+    # size) per insert -- a bucket shared by many documents (a common
+    # project name, a common keyword) made the whole build superlinear.
+    # This doesn't reproduce the *timing* (that needs thousands of records
+    # to show up), but it does pin down the actual contract: every
+    # document sharing a value ends up in that value's bucket exactly
+    # once, regardless of how many others share it.
+    records = [
+        _record(f"d{i}", project_name="Riverside Plant", keywords=["compressor"]) for i in range(50)
+    ]
+    inverted = build_inverted_index(records)
+
+    expected = sorted(f"d{i}" for i in range(50))
+    assert inverted.field_matches("project_name", "Riverside Plant") == expected
+    assert inverted.keyword_matches("compressor") == expected
