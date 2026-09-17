@@ -111,6 +111,63 @@ def _write_launchers(out_dir: Path) -> None:
     (out_dir / "run_console.bat").write_text(RUN_CONSOLE_BAT)
 
 
+# --- Bundle trimming --------------------------------------------------------
+# Everything below is verified unused by this app's actual dependency
+# closure (grepped for `import distutils`/`lib2to3`/`tkinter` across every
+# vendored wheel -- the only hits were cffi's optional runtime-compile path
+# and Pillow's optional ImageTk, neither ever touched by this app) or is
+# flatly dead weight (CPython's own test suite, __pycache__, standalone CLI
+# tools from Tesseract's transitive C-library dependencies that this app
+# never invokes -- only their *libraries* are needed). If a future
+# dependency needs tkinter/distutils/etc., pass --no-trim while
+# investigating rather than assuming this list is still safe.
+
+PYTHON_LIB_TRIM = ["test", "idlelib", "ensurepip", "distutils", "tkinter", "lib2to3", "turtledemo"]
+PYTHON_DLL_TRIM_PREFIXES = ["_test", "_ctypes_test", "_tkinter"]
+PYTHON_TOP_LEVEL_TRIM = ["tcl86t.dll", "tk86t.dll"]
+PYTHON_EXE_TRIM_GLOBS = ["tclsh*.exe", "wish*.exe"]
+
+TESSERACT_EXE_KEEP = {"tesseract.exe"}
+# Some conda packages ship both a versioned DLL (e.g. icuuc78.dll) and a
+# byte-identical unversioned alias (icuuc.dll). Verified via md5sum (both
+# names are byte-identical) and `objdump -p` on every DLL in the bundle
+# (only the versioned name is ever referenced from an import table) -- the
+# alias is pure dead weight, not a fallback anything loads.
+TESSERACT_DUPLICATE_DLL_ALIASES = ["icuuc.dll", "icuin.dll", "icuio.dll", "icutu.dll", "icutest.dll"]
+
+
+def _trim_python_runtime(python_dir: Path) -> None:
+    lib = python_dir / "Lib"
+    for name in PYTHON_LIB_TRIM:
+        shutil.rmtree(lib / name, ignore_errors=True)
+    for cache_dir in lib.rglob("__pycache__"):
+        shutil.rmtree(cache_dir, ignore_errors=True)
+
+    dlls_dir = python_dir / "DLLs"
+    if dlls_dir.is_dir():
+        for f in list(dlls_dir.iterdir()):
+            if any(f.name.startswith(prefix) for prefix in PYTHON_DLL_TRIM_PREFIXES):
+                f.unlink()
+
+    for name in PYTHON_TOP_LEVEL_TRIM:
+        (python_dir / name).unlink(missing_ok=True)
+    for pattern in PYTHON_EXE_TRIM_GLOBS:
+        for f in python_dir.glob(pattern):
+            f.unlink()
+
+
+def _trim_tesseract_runtime(tesseract_dir: Path) -> None:
+    for f in list(tesseract_dir.glob("*.exe")):
+        if f.name not in TESSERACT_EXE_KEEP:
+            f.unlink()
+    for name in TESSERACT_DUPLICATE_DLL_ALIASES:
+        (tesseract_dir / name).unlink(missing_ok=True)
+
+
+def _dir_size(path: Path) -> int:
+    return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     python_source = parser.add_mutually_exclusive_group(required=True)
@@ -125,6 +182,11 @@ def main() -> None:
     )
     parser.add_argument("--wheels-dir", default=DEFAULT_WHEELS_DIR, type=Path)
     parser.add_argument("--out", default=DEFAULT_OUT_DIR, type=Path)
+    parser.add_argument(
+        "--no-trim",
+        action="store_true",
+        help="Skip removing unused stdlib modules / duplicate DLLs / unrelated CLI tools (see _trim_* for what's normally removed).",
+    )
     args = parser.parse_args()
 
     out_dir = args.out
@@ -159,6 +221,14 @@ def main() -> None:
 
     print("5/5 Writing launchers...")
     _write_launchers(out_dir)
+
+    if not args.no_trim:
+        before = _dir_size(out_dir)
+        print("\nTrimming unused stdlib modules / duplicate DLLs / unrelated CLI tools...")
+        _trim_python_runtime(python_dir)
+        _trim_tesseract_runtime(out_dir / "tesseract")
+        after = _dir_size(out_dir)
+        print(f"  {before / 1e6:.0f} MB -> {after / 1e6:.0f} MB")
 
     print(f"\nDone: {out_dir}")
     print("Zip this folder and carry it into the internal network. Double-click run.bat there.")
