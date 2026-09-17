@@ -4,6 +4,7 @@
     projectdb-search search "<query>" [--top 3] [--json] [--interactive]
     projectdb-search review-queue [--index-dir ...]
     projectdb-search serve [--port 8765] [--no-browser]
+    projectdb-search suggest-tuning [--min-samples 5]
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from projectdb_search.indexer import logging_utils
 from projectdb_search.indexer.filename_parser import FilenameParser
 from projectdb_search.indexer.pipeline import run_pipeline
 from projectdb_search.search import feedback as feedback_module
+from projectdb_search.search import tuning
 from projectdb_search.search.llm import get_llm_backend
 from projectdb_search.search.query_parser import parse_query
 from projectdb_search.search.ranker import build_justification, search
@@ -167,6 +169,53 @@ def serve_cmd(index_dir: Path, log_dir: Path | None, corpus_root: Path | None, p
 
     click.echo(f"Serving at http://127.0.0.1:{port}  (index: {index_dir})")
     app.run(host="127.0.0.1", port=port)
+
+
+@cli.command("suggest-tuning")
+@click.option("--index-dir", default=DEFAULT_INDEX_DIR, type=click.Path(path_type=Path))
+@click.option("--log-dir", default=None, type=click.Path(path_type=Path), help="Default: <index-dir>/../logs")
+@click.option(
+    "--min-samples",
+    default=tuning.DEFAULT_MIN_SAMPLES,
+    show_default=True,
+    help="Minimum feedback samples for a field before suggesting a weight change.",
+)
+def suggest_tuning_cmd(index_dir: Path, log_dir: Path | None, min_samples: int) -> None:
+    """Analyze logged feedback and SUGGEST ranking_weights changes.
+
+    This never edits config/default_config.toml -- it only prints a report
+    and a ready-to-paste [ranking_weights] block for a human to review and
+    apply by hand.
+    """
+    config = load_config()
+    log_dir = log_dir or (index_dir.parent / "logs")
+    entries = feedback_module.read_feedback(log_dir)
+
+    if not entries:
+        click.echo("No feedback logged yet -- nothing to analyze. Use `search --interactive` or the web UI first.")
+        return
+
+    unattributed = sum(1 for e in entries if not e.get("chosen_doc_id"))
+    click.echo(
+        f"Analyzed {len(entries)} feedback entries "
+        f"({len(entries) - unattributed} attributable to a specific document, {unattributed} 'none of these').\n"
+    )
+
+    stats = tuning.analyze_feedback(entries, index_dir, config)
+    suggestions = tuning.suggest_weight_changes(stats, config.ranking.weights, min_samples=min_samples)
+
+    for s in suggestions:
+        precision_str = f"{s.precision:.0%}" if s.precision is not None else "n/a"
+        change_str = (
+            f"{s.current_weight} -> {s.suggested_weight}"
+            if s.suggested_weight is not None and s.suggested_weight != s.current_weight
+            else f"{s.current_weight} (no change)"
+        )
+        click.echo(f"{s.field_name:<15} n={s.samples:<4} precision={precision_str:<6} {change_str}")
+        click.echo(f"{'':<15} {s.reason}\n")
+
+    click.echo("Nothing has been changed automatically. To apply, paste this into config/default_config.toml:\n")
+    click.echo(tuning.render_suggested_weights_toml(suggestions))
 
 
 if __name__ == "__main__":

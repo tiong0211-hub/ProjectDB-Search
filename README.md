@@ -21,8 +21,12 @@ Implemented so far:
   to a manual review queue (`data/logs/review_queue.jsonl`) instead of
   blocking indexing
 - A feedback log (`data/logs/feedback.jsonl`): mark a search result
-  correct/incorrect from the CLI (`--interactive`) or the web UI, logged for
-  future ranking/regex tuning (v1 is logging only, no auto-learning yet)
+  correct/incorrect from the CLI (`--interactive`) or the web UI
+- Semi-automatic ranking-weight tuning (`projectdb-search suggest-tuning`):
+  analyzes the feedback log and prints suggested `ranking_weights` changes
+  (bounded to a small per-run adjustment, and only for fields with enough
+  samples) — it never edits the config file itself; a human reviews and
+  applies the change by hand
 - A local web UI (`projectdb-search serve`) — the exact same search engine
   as the CLI, with a browser front-end: search box, Top-3 with
   justification, "Open file", correct/incorrect feedback buttons, and a
@@ -78,6 +82,10 @@ projectdb-search serve
 
 # Documents flagged for manual review (low-confidence OCR, unreadable files)
 projectdb-search review-queue
+
+# Suggested ranking_weights changes based on logged feedback (report only,
+# never edits config/default_config.toml automatically)
+projectdb-search suggest-tuning
 ```
 
 ### Optional LLM-assisted re-ranking
