@@ -19,6 +19,7 @@ from projectdb_search.models import DocumentRecord
 
 RECORDS_DIRNAME = "records"
 MANIFEST_FILENAME = "manifest.json"
+META_FILENAME = "meta.json"
 
 
 @dataclass
@@ -79,6 +80,25 @@ def write_record(index_dir: Path, record: DocumentRecord) -> None:
 def load_record(index_dir: Path, doc_id: str) -> DocumentRecord:
     with open(records_dir(index_dir) / f"{doc_id}.json", encoding="utf-8") as f:
         return DocumentRecord.from_dict(json.load(f))
+
+
+def save_corpus_root(index_dir: Path, corpus_root: Path) -> None:
+    """Remembers where the indexed documents actually live, so `serve`
+    (the web UI) can open the original file for a search result without
+    requiring the user to pass --corpus-root again every time.
+    """
+    index_dir.mkdir(parents=True, exist_ok=True)
+    with open(index_dir / META_FILENAME, "w", encoding="utf-8") as f:
+        json.dump({"corpus_root": str(corpus_root)}, f, indent=2)
+
+
+def load_corpus_root(index_dir: Path) -> Path | None:
+    path = index_dir / META_FILENAME
+    if not path.exists():
+        return None
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    return Path(data["corpus_root"])
 
 
 def load_all_records(index_dir: Path) -> list[DocumentRecord]:

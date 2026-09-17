@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Manual review queue</h2>
+<p class="hint">Documents whose PDF/OCR fallback couldn't produce trustworthy metadata. They're still searchable on whatever filename metadata they have.</p>
+
+{% if not entries %}
+  <p class="empty">Review queue is empty.</p>
+{% else %}
+  <table class="review-table">
+    <thead>
+      <tr><th>File</th><th>Reason</th><th>Confidence</th><th>Logged at</th></tr>
+    </thead>
+    <tbody>
+      {% for e in entries %}
+      <tr>
+        <td>{{ e.file_path }}</td>
+        <td>{{ e.reason }}</td>
+        <td>{{ "%.2f"|format(e.confidence) if e.confidence is not none else "n/a" }}</td>
+        <td>{{ e.timestamp }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,26 @@
+<section class="results">
+  <h2>
+    Results for &ldquo;{{ query }}&rdquo;
+    {% if ambiguous %}<span class="badge badge-ambiguous">ambiguous</span>{% endif %}
+    {% if used_llm_rerank %}<span class="badge badge-llm">LLM re-ranked</span>{% endif %}
+  </h2>
+
+  {% if not results %}
+    <p class="empty">No matching documents found.</p>
+  {% else %}
+    <input type="hidden" id="search-context" value='{{ search_context | tojson }}'>
+    <ol class="result-list">
+      {% for r in results %}
+      <li class="result-item">
+        <div class="result-path">{{ r.file_path }} <span class="score">score: {{ "%.1f"|format(r.score) }}</span></div>
+        <div class="result-justification">{{ r.justification }}</div>
+        <div class="result-actions">
+          <a href="/file/{{ r.doc_id }}" target="_blank" rel="noopener">Open file</a>
+          <button class="feedback-btn correct" data-doc-id="{{ r.doc_id }}" data-correct="true">Correct</button>
+          <button class="feedback-btn incorrect" data-doc-id="{{ r.doc_id }}" data-correct="false">Not this one</button>
+        </div>
+      </li>
+      {% endfor %}
+    </ol>
+  {% endif %}
+</section>

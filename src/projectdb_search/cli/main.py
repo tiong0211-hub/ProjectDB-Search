@@ -1,8 +1,9 @@
 """CLI entry point.
 
     projectdb-search index --corpus-root <path> [--rebuild]
-    projectdb-search search "<query>" [--top 3] [--json]
+    projectdb-search search "<query>" [--top 3] [--json] [--interactive]
     projectdb-search review-queue [--index-dir ...]
+    projectdb-search serve [--port 8765] [--no-browser]
 """
 
 from __future__ import annotations
@@ -16,9 +17,11 @@ from projectdb_search.config import load_config
 from projectdb_search.indexer import logging_utils
 from projectdb_search.indexer.filename_parser import FilenameParser
 from projectdb_search.indexer.pipeline import run_pipeline
+from projectdb_search.search import feedback as feedback_module
 from projectdb_search.search.llm import get_llm_backend
 from projectdb_search.search.query_parser import parse_query
 from projectdb_search.search.ranker import build_justification, search
+from projectdb_search.storage import index_store
 from projectdb_search.storage.inverted_index import load_inverted_index
 
 DEFAULT_INDEX_DIR = Path("data/index")
@@ -46,13 +49,20 @@ def index_cmd(corpus_root: Path, index_dir: Path, log_dir: Path | None, rebuild:
 @cli.command("search")
 @click.argument("query_text")
 @click.option("--index-dir", default=DEFAULT_INDEX_DIR, type=click.Path(path_type=Path))
+@click.option("--log-dir", default=None, type=click.Path(path_type=Path), help="Default: <index-dir>/../logs")
 @click.option("--top", "top_n", default=3, show_default=True)
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON instead of text.")
-def search_cmd(query_text: str, index_dir: Path, top_n: int, as_json: bool) -> None:
+@click.option(
+    "--interactive", is_flag=True, help="After showing results, ask which one was correct and log the feedback."
+)
+def search_cmd(
+    query_text: str, index_dir: Path, log_dir: Path | None, top_n: int, as_json: bool, interactive: bool
+) -> None:
     config = load_config()
     inverted = load_inverted_index(index_dir)
     if inverted is None:
         raise click.ClickException(f"No index found at {index_dir}. Run `projectdb-search index` first.")
+    log_dir = log_dir or (index_dir.parent / "logs")
 
     parser = FilenameParser(config)
     parsed_query = parse_query(query_text, parser)
@@ -88,6 +98,18 @@ def search_cmd(query_text: str, index_dir: Path, top_n: int, as_json: bool) -> N
         click.echo(f"\n{rank}. {match.record.file_path}  (score: {match.score:.1f})")
         click.echo(f"   why: {build_justification(match)}")
 
+    if interactive:
+        choices = [str(i) for i in range(1, len(result.top) + 1)] + ["n"]
+        choice = click.prompt(
+            "\nWhich one is correct? (number, or 'n' for none)", type=click.Choice(choices), show_choices=False
+        )
+        if choice == "n":
+            feedback_module.log_feedback_for_result(log_dir, result, chosen_doc_id=None, correct=False)
+        else:
+            chosen = result.top[int(choice) - 1]
+            feedback_module.log_feedback_for_result(log_dir, result, chosen.record.doc_id, correct=True)
+        click.echo("Thanks — feedback logged.")
+
 
 @cli.command("review-queue")
 @click.option("--index-dir", default=DEFAULT_INDEX_DIR, type=click.Path(path_type=Path))
@@ -105,6 +127,46 @@ def review_queue_cmd(index_dir: Path, log_dir: Path | None) -> None:
         confidence = entry["confidence"]
         confidence_str = f"{confidence:.2f}" if confidence is not None else "n/a"
         click.echo(f"{entry['file_path']}  reason={entry['reason']}  confidence={confidence_str}  ({entry['timestamp']})")
+
+
+@cli.command("serve")
+@click.option("--index-dir", default=DEFAULT_INDEX_DIR, type=click.Path(path_type=Path))
+@click.option("--log-dir", default=None, type=click.Path(path_type=Path), help="Default: <index-dir>/../logs")
+@click.option(
+    "--corpus-root",
+    default=None,
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    help="Override the corpus root recorded at index time (needed to open files from search results).",
+)
+@click.option("--port", default=8765, show_default=True)
+@click.option("--no-browser", is_flag=True, help="Don't automatically open a browser tab.")
+def serve_cmd(index_dir: Path, log_dir: Path | None, corpus_root: Path | None, port: int, no_browser: bool) -> None:
+    """Start the local web UI (same search engine as `search`, browser front-end)."""
+    if load_inverted_index(index_dir) is None:
+        raise click.ClickException(f"No index found at {index_dir}. Run `projectdb-search index` first.")
+
+    config = load_config()
+    log_dir = log_dir or (index_dir.parent / "logs")
+    resolved_corpus_root = corpus_root or index_store.load_corpus_root(index_dir)
+    if resolved_corpus_root is None:
+        click.echo(
+            "Warning: corpus root is unknown (index was built before this feature, or --corpus-root wasn't "
+            "given). Search will work, but 'Open file' links won't.",
+            err=True,
+        )
+
+    from projectdb_search.webui.app import create_app
+
+    app = create_app(index_dir, log_dir, resolved_corpus_root, config)
+
+    if not no_browser:
+        import threading
+        import webbrowser
+
+        threading.Timer(1.0, lambda: webbrowser.open(f"http://127.0.0.1:{port}")).start()
+
+    click.echo(f"Serving at http://127.0.0.1:{port}  (index: {index_dir})")
+    app.run(host="127.0.0.1", port=port)
 
 
 if __name__ == "__main__":

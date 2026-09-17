@@ -130,6 +130,7 @@ def run_pipeline(
     index_dir.mkdir(parents=True, exist_ok=True)
     log_dir = log_dir or (index_dir.parent / "logs")
     ocr_backend = ocr_backend or get_ocr_backend()
+    index_store.save_corpus_root(index_dir, corpus_root)
 
     manifest = {} if force_rebuild else index_store.load_manifest(index_dir)
     supported_extensions = config.extraction.pdf_extensions | config.extraction.image_extensions
