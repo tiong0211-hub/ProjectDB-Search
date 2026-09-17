@@ -12,10 +12,12 @@ the whole index.
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
 from projectdb_search.models import DocumentRecord
+from projectdb_search.storage.inverted_index import INVERTED_INDEX_FILENAME
 
 RECORDS_DIRNAME = "records"
 MANIFEST_FILENAME = "manifest.json"
@@ -99,6 +101,18 @@ def load_corpus_root(index_dir: Path) -> Path | None:
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
     return Path(data["corpus_root"])
+
+
+def clear_index(index_dir: Path) -> None:
+    """Wipes all indexed records + the manifest + the inverted index --
+    used when re-indexing against a different corpus_root than the one
+    already on record: old records point at file_paths relative to a root
+    this index no longer serves, so keeping them around would let search
+    surface documents "Open file" can no longer actually open.
+    """
+    shutil.rmtree(records_dir(index_dir), ignore_errors=True)
+    manifest_path(index_dir).unlink(missing_ok=True)
+    (index_dir / INVERTED_INDEX_FILENAME).unlink(missing_ok=True)
 
 
 def load_all_records(index_dir: Path) -> list[DocumentRecord]:

@@ -40,6 +40,7 @@ class IndexRunSummary:
     total_files: int
     processed: int
     skipped_unchanged: int
+    corpus_root_changed: bool = False
 
 
 def needs_fallback(record: DocumentRecord) -> bool:
@@ -133,6 +134,16 @@ def run_pipeline(
     index_dir.mkdir(parents=True, exist_ok=True)
     log_dir = log_dir or (index_dir.parent / "logs")
     ocr_backend = ocr_backend or get_ocr_backend()
+
+    previous_corpus_root = index_store.load_corpus_root(index_dir)
+    corpus_root_changed = previous_corpus_root is not None and previous_corpus_root.resolve() != corpus_root
+    if corpus_root_changed:
+        # Old records point at file_paths relative to a root this index no
+        # longer serves -- keeping them would let search surface documents
+        # "Open file" can no longer open. Start clean rather than merge.
+        index_store.clear_index(index_dir)
+        force_rebuild = True
+
     index_store.save_corpus_root(index_dir, corpus_root)
 
     manifest = {} if force_rebuild else index_store.load_manifest(index_dir)
@@ -176,4 +187,6 @@ def run_pipeline(
     inverted = build_inverted_index(all_records)
     save_inverted_index(index_dir, inverted)
 
-    return IndexRunSummary(total_files=len(files), processed=processed, skipped_unchanged=skipped)
+    return IndexRunSummary(
+        total_files=len(files), processed=processed, skipped_unchanged=skipped, corpus_root_changed=corpus_root_changed
+    )

@@ -44,6 +44,12 @@ def cli() -> None:
 def index_cmd(corpus_root: Path, index_dir: Path, log_dir: Path | None, rebuild: bool) -> None:
     config = load_config()
     summary = run_pipeline(corpus_root, index_dir, config, force_rebuild=rebuild, log_dir=log_dir)
+    if summary.corpus_root_changed:
+        click.echo(
+            f"Note: this index previously pointed at a different folder. Cleared it and rebuilt "
+            f"from scratch under {corpus_root}.",
+            err=True,
+        )
     click.echo(
         f"Indexed {summary.processed} file(s), skipped {summary.skipped_unchanged} unchanged, "
         f"{summary.total_files} total files found under {corpus_root}."

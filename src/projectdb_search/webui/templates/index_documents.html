@@ -25,6 +25,13 @@
 </form>
 
 {% if summary %}
+{% if summary.corpus_root_changed %}
+  <p class="error">
+    Note: this index previously pointed at a different folder. The old index was
+    cleared and rebuilt from scratch here — nothing from the previous folder is
+    searchable anymore.
+  </p>
+{% endif %}
 <div class="index-summary">
   <p>
     <strong>Done.</strong> Indexed {{ summary.processed }} file(s), skipped

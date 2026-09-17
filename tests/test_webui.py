@@ -168,6 +168,25 @@ def test_index_documents_post_builds_index_and_updates_corpus_root(corpus_root: 
     assert b"No index yet" not in home.data
 
 
+def test_index_documents_post_warns_when_corpus_root_changes(
+    corpus_root: Path, tmp_path: Path, app_config: AppConfig
+):
+    index_dir = tmp_path / "index"
+    app = create_app(index_dir, tmp_path / "logs", None, app_config)
+    app.testing = True
+    client = app.test_client()
+
+    first = client.post("/index-documents", data={"corpus_root": str(corpus_root)})
+    assert b"previously pointed at a different folder" not in first.data
+
+    other_root = tmp_path / "other_corpus"
+    other_root.mkdir()
+    (other_root / "Doc.pdf").write_bytes(b"%PDF-1.4\n")
+
+    second = client.post("/index-documents", data={"corpus_root": str(other_root)})
+    assert b"previously pointed at a different folder" in second.data
+
+
 def test_index_documents_post_rejects_nonexistent_path(tmp_path: Path, app_config: AppConfig):
     app = create_app(tmp_path / "index", tmp_path / "logs", None, app_config)
     app.testing = True

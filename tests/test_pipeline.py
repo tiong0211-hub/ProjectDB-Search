@@ -129,6 +129,46 @@ def test_extraction_error_is_isolated_and_never_aborts_the_whole_run(
     assert unaffected.extraction_status == "ok"
 
 
+def test_reindexing_same_corpus_root_accumulates_incrementally(
+    corpus_root: Path, tmp_path: Path, app_config: AppConfig
+):
+    index_dir = tmp_path / "index"
+
+    first = run_pipeline(corpus_root, index_dir, app_config)
+    assert first.corpus_root_changed is False
+    assert first.skipped_unchanged == 0
+
+    second = run_pipeline(corpus_root, index_dir, app_config)
+    assert second.corpus_root_changed is False
+    # Same folder, nothing changed -- everything should be skipped, not re-parsed.
+    assert second.skipped_unchanged == second.total_files
+    assert second.processed == 0
+
+
+def test_reindexing_a_different_corpus_root_clears_the_old_index(
+    corpus_root: Path, tmp_path: Path, app_config: AppConfig
+):
+    index_dir = tmp_path / "index"
+    run_pipeline(corpus_root, index_dir, app_config)
+    old_record = _find_record(index_dir, "RiversidePlant/PID/RiversidePlant_PID_Unit3_2021.pdf")
+    assert old_record is not None
+
+    other_root = tmp_path / "other_corpus"
+    other_root.mkdir()
+    (other_root / "SomeOtherDoc.pdf").write_bytes(b"%PDF-1.4\n")
+
+    summary = run_pipeline(other_root, index_dir, app_config)
+
+    assert summary.corpus_root_changed is True
+    # The old folder's records are gone -- searching wouldn't surface a
+    # document "Open file" could no longer actually open.
+    from projectdb_search.storage.index_store import load_all_records
+
+    all_records = load_all_records(index_dir)
+    assert all(r.file_path != old_record.file_path for r in all_records)
+    assert any(r.file_path == "SomeOtherDoc.pdf" for r in all_records)
+
+
 def _read_jsonl(path: Path) -> list[dict]:
     import json
 
