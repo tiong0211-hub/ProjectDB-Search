@@ -59,8 +59,12 @@ def test_incremental_reindex_skips_unchanged_files(corpus_root: Path, tmp_path: 
     index_dir = tmp_path / "index"
     runner = CliRunner()
 
+    total_files = sum(1 for p in corpus_root.rglob("*") if p.is_file())
+
     first = runner.invoke(cli, ["index", "--corpus-root", str(corpus_root), "--index-dir", str(index_dir)])
+    assert first.exit_code == 0, first.output
     assert "skipped 0 unchanged" in first.output
 
     second = runner.invoke(cli, ["index", "--corpus-root", str(corpus_root), "--index-dir", str(index_dir)])
-    assert "skipped 8 unchanged" in second.output
+    assert second.exit_code == 0, second.output
+    assert f"skipped {total_files} unchanged" in second.output

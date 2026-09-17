@@ -5,27 +5,50 @@ documents (drawings, scanned PDFs, photos, technical memos) via natural
 language, by matching a query against a metadata index — pointing to
 **which document, and why**, rather than summarizing content.
 
-## Status: Phase 0~3 (rule-based search MVP)
+## Status: Phase 0~4 (rule-based search + PDF/OCR fallback)
 
-Implemented in this phase:
+Implemented so far:
 - Filename/folder-based metadata indexer (regex rules, config-tunable)
 - A JSON-file metadata index + inverted keyword index (no external DB/search
   engine — this is what keeps search fast without needing anything heavier)
 - Rule-based query parsing + scoring/ranking with human-readable
   justification for each result
-- A CLI (`projectdb-search index` / `projectdb-search search`)
+- A CLI (`projectdb-search index` / `projectdb-search search` / `projectdb-search review-queue`)
+- PDF text-layer extraction and Tesseract OCR fallback, run only for
+  documents the filename/folder pass couldn't fully identify (never
+  indiscriminately across the whole corpus)
+- Every fallback extraction attempt is logged (`data/logs/pdf_extraction_log.jsonl`)
+  independent of whether it got merged, and low-confidence OCR is flagged
+  to a manual review queue (`data/logs/review_queue.jsonl`) instead of
+  blocking indexing
 - Test fixtures + an automated Top-3 correctness check + a search-speed
   benchmark
 
-Not yet implemented (see `docs` / project plan for the full roadmap): PDF
-text extraction, OCR fallback for scanned documents, a local web UI,
-optional LLM-assisted re-ranking for ambiguous queries, and exe packaging.
+**Scope note**: only PDFs and plain image files (jpg/png/tif) are ever
+opened for text/OCR extraction. Office formats (Word/Excel/PowerPoint) are
+intentionally never parsed — many real copies of those are internal
+security-restricted files — and aren't even walked by the indexer.
+
+Not yet implemented (see the project plan for the full roadmap): a local
+web UI, a feedback-logging loop for ambiguous search results,
+optional LLM-assisted re-ranking, and exe packaging.
 
 ## Install
 
 ```bash
 pip install -e ".[dev]"
 ```
+
+PDF/OCR fallback also needs two system binaries on PATH (not installed via
+pip): [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) and
+[Poppler](https://poppler.freedesktop.org/) (for `pdf2image`). On Debian/Ubuntu:
+
+```bash
+apt-get install -y tesseract-ocr poppler-utils
+```
+
+Without them, filename/folder-only indexing still works — the fallback
+pass simply can't run.
 
 ## Usage
 

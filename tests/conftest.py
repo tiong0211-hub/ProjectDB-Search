@@ -29,9 +29,10 @@ def corpus_root(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def built_index(corpus_root: Path, tmp_path: Path, app_config: AppConfig) -> tuple[Path, InvertedIndex]:
+def built_index(corpus_root: Path, tmp_path: Path, app_config: AppConfig) -> tuple[Path, Path, InvertedIndex]:
     index_dir = tmp_path / "index"
-    run_pipeline(corpus_root, index_dir, app_config)
+    log_dir = tmp_path / "logs"
+    run_pipeline(corpus_root, index_dir, app_config, log_dir=log_dir)
     inverted = load_inverted_index(index_dir)
     assert inverted is not None
-    return index_dir, inverted
+    return index_dir, log_dir, inverted

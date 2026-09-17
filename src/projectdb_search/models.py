@@ -43,8 +43,9 @@ class DocumentRecord:
     equipment_tag: Optional[str] = None
     keywords: list[str] = field(default_factory=list)
 
-    source_of_metadata: str = "filename"  # "filename" | "pdf_text" | "ocr" (future)
-    extraction_status: str = "ok"  # "ok" | "partial" | "needs_review" (future)
+    source_of_metadata: str = "filename"  # e.g. "filename", "filename+pdf_text", "filename+ocr"
+    extraction_status: str = "ok"  # "ok" | "needs_review"
+    ocr_confidence: Optional[float] = None
     indexed_at: str = ""
     schema_version: int = 1
 
@@ -68,6 +69,24 @@ class DocumentRecord:
             extraction_status="ok",
             indexed_at=datetime.now(timezone.utc).isoformat(),
         )
+
+    def merge_partial(self, meta: PartialMetadata, source: str) -> None:
+        """Fill fields the first (filename) pass left empty using a
+        second-pass result (PDF text or OCR). Fields already set win — the
+        first pass is assumed to reflect a deliberate naming convention, so
+        a fallback pass only supplements gaps rather than overwriting it.
+        """
+        for field_name in ("project_name", "doc_type", "year", "department", "equipment_tag"):
+            if getattr(self, field_name) is None:
+                value = getattr(meta, field_name)
+                if value is not None:
+                    setattr(self, field_name, value)
+
+        for keyword in meta.keywords:
+            if keyword not in self.keywords:
+                self.keywords.append(keyword)
+
+        self.source_of_metadata = f"{self.source_of_metadata}+{source}"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

@@ -29,6 +29,15 @@ class LLMConfig:
 
 
 @dataclass
+class ExtractionConfig:
+    min_text_chars: int
+    ocr_dpi: int
+    ocr_confidence_threshold: float
+    pdf_extensions: set[str]
+    image_extensions: set[str]
+
+
+@dataclass
 class AppConfig:
     doc_type_patterns: dict[str, list[str]]
     project_name_patterns: dict[str, list[str]]
@@ -37,6 +46,7 @@ class AppConfig:
     year_pattern: str
     ranking: RankingConfig
     llm: LLMConfig
+    extraction: ExtractionConfig
     raw: dict = field(default_factory=dict)
 
 
@@ -47,6 +57,7 @@ def load_config(path: Path | None = None) -> AppConfig:
 
     ranking_raw = raw.get("ranking", {})
     llm_raw = raw.get("llm", {})
+    extraction_raw = raw.get("extraction", {})
 
     return AppConfig(
         doc_type_patterns=raw.get("doc_type_patterns", {}),
@@ -64,6 +75,15 @@ def load_config(path: Path | None = None) -> AppConfig:
             api_key=llm_raw.get("api_key", ""),
             base_url=llm_raw.get("base_url", ""),
             model=llm_raw.get("model", ""),
+        ),
+        extraction=ExtractionConfig(
+            min_text_chars=extraction_raw.get("min_text_chars", 20),
+            ocr_dpi=extraction_raw.get("ocr_dpi", 200),
+            ocr_confidence_threshold=extraction_raw.get("ocr_confidence_threshold", 0.55),
+            pdf_extensions=set(extraction_raw.get("pdf_extensions", [".pdf"])),
+            image_extensions=set(
+                extraction_raw.get("image_extensions", [".jpg", ".jpeg", ".png", ".tif", ".tiff"])
+            ),
         ),
         raw=raw,
     )

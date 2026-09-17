@@ -46,6 +46,31 @@ ambiguous_margin = 5
 # Cap on how many keyword hits count toward the score (diminishing returns).
 max_keyword_hits = 5
 
+[extraction]
+# PDF/OCR fallback (Phase 4) is only ever attempted for documents whose
+# filename/folder parsing left required fields empty (see
+# indexer/pipeline.py:needs_fallback) — never run indiscriminately across
+# the whole corpus, to keep indexing time bounded.
+#
+# A PDF's text layer is trusted only if it yields at least this many
+# characters; shorter/empty text is treated as "no usable text layer" and
+# triggers OCR instead.
+min_text_chars = 20
+# DPI used to rasterize PDF pages before OCR (only reached when there's no
+# usable text layer, or for image files, which have no text layer at all).
+ocr_dpi = 200
+# Tesseract's mean word confidence (0-100, normalized to 0.0-1.0 here) must
+# meet this bar for OCR output to be merged into the index. Below it, the
+# document keeps its filename-only metadata, is marked "needs_review", and
+# is logged to the manual review queue instead of blocking the pipeline.
+ocr_confidence_threshold = 0.55
+# Only these formats get PDF-text/OCR fallback. Office formats (Word/Excel/
+# PowerPoint) are intentionally excluded: many are internal
+# security-restricted files, and this project only ever wants "which
+# document/section" pointers, not content extraction from those formats.
+pdf_extensions = [".pdf"]
+image_extensions = [".jpg", ".jpeg", ".png", ".tif", ".tiff"]
+
 [llm]
 # Empty by default -> NoOpBackend is selected, tool works fully offline.
 # Set api_key + base_url later to point at an Anthropic-compatible endpoint

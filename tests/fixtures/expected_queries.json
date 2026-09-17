@@ -16,15 +16,26 @@
     "expected_relative_path": "RiversidePlant/Memo/RiversidePlant_Memo_2020_SafetyReview.pdf"
   },
   {
-    "query": "compressor station memo",
-    "expected_relative_path": "CompressorStation/Memo/old_backup_copy_final_v2.pdf"
+    "query": "P&ID compressor station unit 1 2018",
+    "expected_relative_path": "CompressorStation/PID/CompressorStation_PID_Unit1_2018.pdf"
   },
   {
     "query": "electrical photo motor room 2019",
     "expected_relative_path": "CompressorStation/Electrical/IMG_20190304_Electrical_MotorRoom.jpg"
   },
   {
-    "query": "P&ID compressor station unit 1 2018",
-    "expected_relative_path": "CompressorStation/PID/CompressorStation_PID_Unit1_2018.pdf"
+    "query": "compressor station memo safety review 2015",
+    "expected_relative_path": "Unsorted/old_backup_copy_final_v2.pdf",
+    "note": "filename/folder are uninformative -- requires the PDF-text fallback pass"
+  },
+  {
+    "query": "isometric HX-450",
+    "expected_relative_path": "Unsorted/nameplate_photo_scan.pdf",
+    "note": "scanned (no text layer) PDF -- requires the OCR fallback pass"
+  },
+  {
+    "query": "electrical motor room P-330",
+    "expected_relative_path": "Unsorted/photo_0042.jpg",
+    "note": "plain image file -- requires the direct image OCR fallback pass"
   }
 ]
