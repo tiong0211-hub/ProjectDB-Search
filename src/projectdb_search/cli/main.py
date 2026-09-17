@@ -1,15 +1,21 @@
 """CLI entry point.
 
-    projectdb-search index --corpus-root <path> [--rebuild]
+    projectdb-search index --corpus-root <path> [--rebuild] [--deep-scan]
+    projectdb-search deep-scan [--index-dir ...]
     projectdb-search search "<query>" [--top 3] [--json] [--interactive]
     projectdb-search review-queue [--index-dir ...]
     projectdb-search serve [--port 8765] [--no-browser]
     projectdb-search suggest-tuning [--min-samples 5]
+    projectdb-search suggest-projects --corpus-root <path> [--depth 1]
 """
 
 from __future__ import annotations
 
 import json
+import os
+import re
+import time
+from collections import Counter
 from pathlib import Path
 
 import click
@@ -18,7 +24,7 @@ from projectdb_search import runtime_paths
 from projectdb_search.config import load_config
 from projectdb_search.indexer import logging_utils
 from projectdb_search.indexer.filename_parser import FilenameParser
-from projectdb_search.indexer.pipeline import run_pipeline
+from projectdb_search.indexer.pipeline import run_deep_scan, run_pipeline
 from projectdb_search.search import feedback as feedback_module
 from projectdb_search.search import tuning
 from projectdb_search.search.llm import get_llm_backend
@@ -41,8 +47,25 @@ def cli() -> None:
 @click.option("--index-dir", default=DEFAULT_INDEX_DIR, type=click.Path(path_type=Path))
 @click.option("--log-dir", default=None, type=click.Path(path_type=Path), help="Default: <index-dir>/../logs")
 @click.option("--rebuild", is_flag=True, help="Force full re-index instead of incremental.")
-def index_cmd(corpus_root: Path, index_dir: Path, log_dir: Path | None, rebuild: bool) -> None:
+@click.option(
+    "--deep-scan",
+    is_flag=True,
+    help="Also run PDF-text/OCR fallback (slow) for documents filename parsing couldn't fully "
+    "identify, right after indexing. Can also be run/resumed later via `projectdb-search deep-scan`.",
+)
+@click.option(
+    "--workers",
+    "workers",
+    default=None,
+    type=int,
+    help="Parallel workers for --deep-scan. Default: config's deep_scan_workers (0 = auto).",
+)
+def index_cmd(
+    corpus_root: Path, index_dir: Path, log_dir: Path | None, rebuild: bool, deep_scan: bool, workers: int | None
+) -> None:
     config = load_config()
+    log_dir = log_dir or (index_dir.parent / "logs")
+
     summary = run_pipeline(corpus_root, index_dir, config, force_rebuild=rebuild, log_dir=log_dir)
     if summary.corpus_root_changed:
         click.echo(
@@ -52,7 +75,77 @@ def index_cmd(corpus_root: Path, index_dir: Path, log_dir: Path | None, rebuild:
         )
     click.echo(
         f"Indexed {summary.processed} file(s), skipped {summary.skipped_unchanged} unchanged, "
-        f"{summary.total_files} total files found under {corpus_root}."
+        f"{summary.total_files} total files found under {corpus_root}. Search is ready to use now."
+    )
+
+    if summary.pending_deep_scan:
+        click.echo(
+            f"{summary.pending_deep_scan} file(s) couldn't be fully identified from filename/folder "
+            "name alone and are searchable by filename only for now."
+        )
+        if deep_scan:
+            _run_deep_scan(index_dir, config, corpus_root=corpus_root, log_dir=log_dir, max_workers=workers)
+        else:
+            click.echo(
+                "Run `projectdb-search deep-scan` (or re-run with --deep-scan) to read their contents "
+                "via PDF text/OCR -- this is the slow step and can be run separately, any time, and "
+                "resumed if interrupted."
+            )
+
+
+@cli.command("deep-scan")
+@click.option("--index-dir", default=DEFAULT_INDEX_DIR, type=click.Path(path_type=Path))
+@click.option("--log-dir", default=None, type=click.Path(path_type=Path), help="Default: <index-dir>/../logs")
+@click.option(
+    "--corpus-root",
+    default=None,
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    help="Override the corpus root recorded at index time.",
+)
+@click.option(
+    "--workers", default=None, type=int, help="Parallel workers. Default: config's deep_scan_workers (0 = auto)."
+)
+def deep_scan_cmd(index_dir: Path, log_dir: Path | None, corpus_root: Path | None, workers: int | None) -> None:
+    """Run (or resume) PDF-text/OCR fallback for documents `index` flagged as
+    needing it. This is the slow step -- safe to interrupt with Ctrl+C and
+    re-run later; already-processed documents are never redone.
+    """
+    config = load_config()
+    log_dir = log_dir or (index_dir.parent / "logs")
+    _run_deep_scan(index_dir, config, corpus_root=corpus_root, log_dir=log_dir, max_workers=workers)
+
+
+def _run_deep_scan(
+    index_dir: Path, config, corpus_root: Path | None, log_dir: Path, max_workers: int | None = None
+) -> None:
+    start = time.monotonic()
+
+    def on_progress(done: int, total: int, current_file: str) -> None:
+        elapsed = time.monotonic() - start
+        rate = done / elapsed if elapsed > 0 else 0
+        eta_str = f", ~{(total - done) / rate:.0f}s left" if rate > 0 else ""
+        click.echo(f"\r  {done}/{total}{eta_str}: {current_file}" + " " * 20, nl=False, err=True)
+
+    try:
+        summary = run_deep_scan(
+            index_dir,
+            config,
+            corpus_root=corpus_root,
+            log_dir=log_dir,
+            progress_callback=on_progress,
+            max_workers=max_workers,
+        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from None
+
+    click.echo("", err=True)
+    if summary.total_pending == 0:
+        click.echo("Nothing pending -- run `projectdb-search index` first, or everything is already scanned.")
+        return
+
+    click.echo(
+        f"Deep-scanned {summary.processed}/{summary.total_pending} document(s)"
+        + (" -- interrupted, re-run to finish the rest." if summary.cancelled else ".")
     )
 
 
@@ -229,6 +322,50 @@ def suggest_tuning_cmd(index_dir: Path, log_dir: Path | None, min_samples: int) 
 
     click.echo("Nothing has been changed automatically. To apply, paste this into config/default_config.toml:\n")
     click.echo(tuning.render_suggested_weights_toml(suggestions))
+
+
+@cli.command("suggest-projects")
+@click.option("--corpus-root", required=True, type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option(
+    "--depth", default=1, show_default=True, help="Folder depth under corpus-root to scan for candidate names."
+)
+def suggest_projects_cmd(corpus_root: Path, depth: int) -> None:
+    """Suggest project_name_patterns entries from your corpus's own folder names.
+
+    Registering real project names in config/default_config.toml is the
+    single biggest lever on indexing speed: a document only skips the slow
+    PDF-text/OCR fallback pass if its project name AND doc type are both
+    identifiable from the filename/folder alone (see
+    indexer/pipeline.py:needs_fallback). This never edits the config file
+    itself -- it only prints a ready-to-paste block for a human to review.
+    """
+    counts: Counter[str] = Counter()
+    for dirpath, dirnames, _filenames in os.walk(corpus_root):
+        rel = Path(dirpath).relative_to(corpus_root)
+        current_depth = 0 if rel == Path(".") else len(rel.parts)
+        if current_depth >= depth:
+            dirnames[:] = []  # don't descend past the requested depth
+            continue
+        for name in dirnames:
+            if name.strip():
+                counts[name] += 1
+
+    if not counts:
+        click.echo(f"No subfolders found under {corpus_root} at depth <= {depth}.")
+        return
+
+    click.echo(f"Folder names found under {corpus_root} (depth <= {depth}), most common first:\n")
+    for name, count in counts.most_common():
+        click.echo(f"  {count:>4}  {name}")
+
+    click.echo(
+        "\nPaste the ones that are real project names into config/default_config.toml's "
+        "[project_name_patterns] (remove ones that aren't project names, like 'Unsorted' or 'Legacy'):\n"
+    )
+    click.echo("[project_name_patterns]")
+    for name, _count in counts.most_common():
+        pattern = re.escape(name).replace(r"\ ", r"\s*")
+        click.echo(f'"{name}" = ["{pattern}"]')
 
 
 if __name__ == "__main__":

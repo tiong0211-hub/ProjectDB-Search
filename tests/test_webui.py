@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import dataclasses
 import json
+import time
 from pathlib import Path
+
+import pytest
 
 from projectdb_search.config import AppConfig
 from projectdb_search.search import feedback
@@ -14,6 +18,25 @@ def _client(corpus_root: Path, built_index, app_config: AppConfig):
     app = create_app(index_dir, log_dir, corpus_root, app_config)
     app.testing = True
     return app.test_client(), log_dir
+
+
+def _sequential_config(app_config: AppConfig) -> AppConfig:
+    """A copy of app_config forced to single-worker deep scans -- keeps
+    background-job tests deterministic and avoids spawning a process pool
+    for a handful of tiny fixture documents.
+    """
+    return dataclasses.replace(app_config, extraction=dataclasses.replace(app_config.extraction, deep_scan_workers=1))
+
+
+def _wait_until_not_running(client, timeout: float = 10.0) -> dict:
+    deadline = time.monotonic() + timeout
+    progress = client.get("/deep-scan/progress").get_json()
+    while progress["running"] and time.monotonic() < deadline:
+        time.sleep(0.05)
+        progress = client.get("/deep-scan/progress").get_json()
+    if progress["running"]:
+        pytest.fail("deep scan did not finish in time")
+    return progress
 
 
 def test_healthz(corpus_root: Path, built_index: tuple[Path, Path, InvertedIndex], app_config: AppConfig):
@@ -109,9 +132,11 @@ def test_get_file_404s_for_unknown_doc_id(
 
 
 def test_review_queue_page_lists_low_confidence_entries(
-    corpus_root: Path, built_index: tuple[Path, Path, InvertedIndex], app_config: AppConfig
+    corpus_root: Path, deep_scanned_index: tuple[Path, Path, InvertedIndex], app_config: AppConfig
 ):
-    client, _ = _client(corpus_root, built_index, app_config)
+    # The review queue is only populated once a deep scan has actually run
+    # (Stage 1 alone never opens a file, so it never flags anything).
+    client, _ = _client(corpus_root, deep_scanned_index, app_config)
     resp = client.get("/review-queue")
     assert resp.status_code == 200
     assert b"blurry_scan_noname.pdf" in resp.data
@@ -196,3 +221,55 @@ def test_index_documents_post_rejects_nonexistent_path(tmp_path: Path, app_confi
 
     assert resp.status_code == 200
     assert b"is not a folder that exists" in resp.data
+
+
+def test_index_documents_page_shows_pending_deep_scan_count(
+    corpus_root: Path, built_index: tuple[Path, Path, InvertedIndex], app_config: AppConfig
+):
+    client, _ = _client(corpus_root, built_index, app_config)
+    resp = client.get("/index-documents")
+    assert resp.status_code == 200
+    assert b"couldn" in resp.data  # "couldn't be fully identified..."
+    assert b"deep-scan-start" in resp.data
+
+
+def test_deep_scan_endpoint_processes_all_pending_documents(
+    corpus_root: Path, built_index: tuple[Path, Path, InvertedIndex], app_config: AppConfig
+):
+    index_dir, log_dir, _ = built_index
+    app = create_app(index_dir, log_dir, corpus_root, _sequential_config(app_config))
+    app.testing = True
+    client = app.test_client()
+
+    start = client.post("/deep-scan")
+    assert start.status_code == 200
+    assert start.get_json()["status"] == "started"
+
+    progress = _wait_until_not_running(client)
+    assert progress["summary"]["processed"] == progress["summary"]["total_pending"]
+    assert progress["summary"]["processed"] > 0
+    assert progress["summary"]["cancelled"] is False
+
+
+def test_deep_scan_endpoint_rejects_concurrent_start(
+    corpus_root: Path, built_index: tuple[Path, Path, InvertedIndex], app_config: AppConfig
+):
+    index_dir, log_dir, _ = built_index
+    app = create_app(index_dir, log_dir, corpus_root, _sequential_config(app_config))
+    app.testing = True
+    client = app.test_client()
+
+    first = client.post("/deep-scan")
+    assert first.status_code == 200
+    second = client.post("/deep-scan")
+    assert second.status_code == 409
+
+    _wait_until_not_running(client)  # drain so no background thread outlives the test
+
+
+def test_deep_scan_cancel_without_a_running_job_returns_409(
+    corpus_root: Path, built_index: tuple[Path, Path, InvertedIndex], app_config: AppConfig
+):
+    client, _ = _client(corpus_root, built_index, app_config)
+    resp = client.post("/deep-scan/cancel")
+    assert resp.status_code == 409

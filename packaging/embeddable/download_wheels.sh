@@ -20,7 +20,7 @@ pip download \
   --platform win_amd64 --python-version 3.11 --implementation cp --abi cp311 \
   --only-binary=:all: \
   -d "$OUT_DIR" \
-  click pdfplumber pytesseract pypdfium2 Pillow Flask anthropic
+  click pytesseract pypdfium2 Pillow Flask anthropic
 
 ls "$OUT_DIR" > "$SCRIPT_DIR/wheels-manifest.txt"
 echo "Downloaded $(wc -l < "$SCRIPT_DIR/wheels-manifest.txt") wheel(s) to $OUT_DIR"

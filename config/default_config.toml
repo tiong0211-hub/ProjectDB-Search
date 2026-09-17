@@ -13,7 +13,18 @@
 
 [project_name_patterns]
 # Known project names, matched as literal (case-insensitive) substrings.
-# Extend this list as real project names become known.
+#
+# *** This list directly controls how much OCR the indexer has to do. ***
+# A document only skips the slow PDF-text/OCR fallback pass if BOTH
+# project_name and doc_type are identified from the filename/folder alone
+# (see indexer/pipeline.py:needs_fallback). If your real project names
+# aren't listed here, nearly every document will fall through to OCR and
+# indexing will be extremely slow. Run `projectdb-search suggest-projects
+# --corpus-root <path>` to get a ready-to-paste list of candidate project
+# names from your actual folder structure, then add them below.
+#
+# The two entries below are development samples for this repo's test
+# fixtures -- replace them with your real project names.
 "Riverside Plant" = ["riverside\\s*plant", "riverside"]
 "Compressor Station" = ["compressor\\s*station"]
 
@@ -58,7 +69,25 @@ max_keyword_hits = 5
 min_text_chars = 20
 # DPI used to rasterize PDF pages before OCR (only reached when there's no
 # usable text layer, or for image files, which have no text layer at all).
+# The actual scale used is capped by ocr_max_side_px below, whichever is
+# smaller -- this DPI is only reached on small/normal page sizes.
 ocr_dpi = 200
+# Only the first N pages of a PDF are ever read during the PDF-text/OCR
+# fallback pass. The project/doc-type/tag info this tool needs lives on a
+# cover page or title block, not buried on page 80 -- and reading only a
+# couple of pages instead of an entire multi-hundred-page manual is one of
+# the biggest levers on indexing time.
+max_fallback_pages = 2
+# Upper bound, in pixels, on the longer side of an image handed to
+# Tesseract. Large-format drawings (A0/A1) rasterized at ocr_dpi can exceed
+# 30 megapixels, which takes Tesseract tens of seconds per page; capping
+# the side length keeps OCR time roughly bounded regardless of the
+# original drawing's paper size, with no meaningful accuracy loss for the
+# cover-page/title-block text this tool looks for.
+ocr_max_side_px = 2400
+# Number of documents processed in parallel during the deep-scan (PDF-text/
+# OCR fallback) pass. 0 = auto (min(CPU count, 4)).
+deep_scan_workers = 0
 # Tesseract's mean word confidence (0-100, normalized to 0.0-1.0 here) must
 # meet this bar for OCR output to be merged into the index. Below it, the
 # document keeps its filename-only metadata, is marked "needs_review", and

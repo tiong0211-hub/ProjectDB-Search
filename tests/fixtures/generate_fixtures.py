@@ -29,7 +29,7 @@ FONT_PATH = Path(__file__).parent / "fonts" / "DejaVuSans.ttf"
 
 def _write_text_pdf(path: Path, text: str) -> None:
     """A PDF with a real, extractable text layer (drawString embeds actual
-    font glyphs + text operators pdfplumber can read back)."""
+    font glyphs + text operators pypdfium2 can read back)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     c = canvas.Canvas(str(path), pagesize=(792, 300))
     c.setFont("Helvetica", 16)
@@ -47,8 +47,8 @@ def _render_text_image(text: str, size: tuple[int, int] = (1600, 300), font_size
 
 def _write_scanned_pdf(path: Path, image: Image.Image) -> None:
     """A PDF containing only a rasterized image -- no text layer at all,
-    same as a real scanned document. pdfplumber.extract_text() returns ""
-    for these, which is what should trigger the OCR fallback."""
+    same as a real scanned document. Text extraction returns "" for these,
+    which is what should trigger the OCR fallback."""
     path.parent.mkdir(parents=True, exist_ok=True)
     c = canvas.Canvas(str(path), pagesize=(image.width, image.height))
     c.drawImage(ImageReader(image), 0, 0, width=image.width, height=image.height)

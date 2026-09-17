@@ -24,6 +24,14 @@ class TesseractBackend(OCRBackend):
         word_confidences: list[float] = []
 
         for image in images:
+            # Grayscale cuts Tesseract's per-pixel work (1 channel instead
+            # of 3) with no accuracy loss for this tool's purposes; PDF
+            # pages already come in pre-rendered as grayscale (see
+            # pdf_extractor.render_pages_to_images), but photos from image
+            # files still arrive in color, hence converting unconditionally
+            # here rather than relying on the caller.
+            if image.mode != "L":
+                image = image.convert("L")
             data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
             words = [w for w in data["text"] if w.strip()]
             page_texts.append(" ".join(words))

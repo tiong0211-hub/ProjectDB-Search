@@ -11,13 +11,14 @@ involved).
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 from flask import Flask, abort, current_app, jsonify, render_template, request, send_file
 
 from projectdb_search.indexer import logging_utils
 from projectdb_search.indexer.filename_parser import FilenameParser
-from projectdb_search.indexer.pipeline import run_pipeline
+from projectdb_search.indexer.pipeline import run_deep_scan, run_pipeline
 from projectdb_search.search import feedback as feedback_module
 from projectdb_search.search.llm import get_llm_backend
 from projectdb_search.search.query_parser import parse_query
@@ -25,6 +26,63 @@ from projectdb_search.search.ranker import SearchResult, build_justification
 from projectdb_search.search.ranker import search as run_search
 from projectdb_search.storage import index_store
 from projectdb_search.storage.inverted_index import load_inverted_index
+
+# Deep-scan (PDF-text/OCR fallback) runs in a background thread so the
+# request that starts it returns immediately -- the browser polls
+# /deep-scan/progress instead of blocking on a request for however long the
+# scan takes. One job at a time is enough for this single-user local tool;
+# state lives in this plain dict rather than a database since it's only
+# ever read/written by this one process.
+_deep_scan_lock = threading.Lock()
+_deep_scan_state: dict = {
+    "running": False,
+    "done": 0,
+    "total": 0,
+    "current_file": "",
+    "cancel_requested": False,
+    "summary": None,
+    "error": None,
+}
+
+
+def _count_pending_deep_scan(index_dir: Path) -> int:
+    if load_inverted_index(index_dir) is None:
+        return 0
+    return sum(1 for r in index_store.load_all_records(index_dir) if r.extraction_status == "pending_deep_scan")
+
+
+def _run_deep_scan_job(index_dir: Path, config, corpus_root: Path | None, log_dir: Path) -> None:
+    def on_progress(done: int, total: int, current_file: str) -> None:
+        with _deep_scan_lock:
+            _deep_scan_state["done"] = done
+            _deep_scan_state["total"] = total
+            _deep_scan_state["current_file"] = current_file
+
+    def should_cancel() -> bool:
+        with _deep_scan_lock:
+            return _deep_scan_state["cancel_requested"]
+
+    try:
+        summary = run_deep_scan(
+            index_dir,
+            config,
+            corpus_root=corpus_root,
+            log_dir=log_dir,
+            progress_callback=on_progress,
+            should_cancel=should_cancel,
+        )
+        with _deep_scan_lock:
+            _deep_scan_state["summary"] = {
+                "total_pending": summary.total_pending,
+                "processed": summary.processed,
+                "cancelled": summary.cancelled,
+            }
+    except Exception as exc:
+        with _deep_scan_lock:
+            _deep_scan_state["error"] = str(exc)
+    finally:
+        with _deep_scan_lock:
+            _deep_scan_state["running"] = False
 
 
 def register_routes(app: Flask) -> None:
@@ -69,7 +127,11 @@ def register_routes(app: Flask) -> None:
         index_dir = current_app.config["INDEX_DIR"]
         default_corpus_root = current_app.config["CORPUS_ROOT"] or index_store.load_corpus_root(index_dir)
         return render_template(
-            "index_documents.html", default_corpus_root=default_corpus_root, summary=None, error=None
+            "index_documents.html",
+            default_corpus_root=default_corpus_root,
+            summary=None,
+            error=None,
+            pending_deep_scan_count=_count_pending_deep_scan(index_dir),
         )
 
     @app.post("/index-documents")
@@ -88,14 +150,64 @@ def register_routes(app: Flask) -> None:
                 default_corpus_root=corpus_root_input,
                 summary=None,
                 error=f"'{corpus_root_input}' is not a folder that exists on this machine.",
+                pending_deep_scan_count=_count_pending_deep_scan(index_dir),
             )
 
+        # Stage 1 only -- filename/folder parsing. Fast even over a large
+        # corpus, so it stays a normal (blocking) request; the slow part
+        # (deep scan) is a separate, backgrounded step below.
         summary = run_pipeline(corpus_path, index_dir, config, force_rebuild=rebuild, log_dir=log_dir)
         current_app.config["CORPUS_ROOT"] = corpus_path.resolve()
 
         return render_template(
-            "index_documents.html", default_corpus_root=str(corpus_path), summary=summary, error=None
+            "index_documents.html",
+            default_corpus_root=str(corpus_path),
+            summary=summary,
+            error=None,
+            pending_deep_scan_count=summary.pending_deep_scan,
         )
+
+    @app.post("/deep-scan")
+    def start_deep_scan():
+        index_dir = current_app.config["INDEX_DIR"]
+        log_dir = current_app.config["LOG_DIR"]
+        config = current_app.config["APP_CONFIG"]
+        corpus_root = current_app.config["CORPUS_ROOT"] or index_store.load_corpus_root(index_dir)
+
+        if corpus_root is None:
+            abort(400, "No corpus folder on record -- index a folder first.")
+
+        with _deep_scan_lock:
+            if _deep_scan_state["running"]:
+                return jsonify({"status": "already_running"}), 409
+            _deep_scan_state.update(
+                running=True,
+                done=0,
+                total=0,
+                current_file="",
+                cancel_requested=False,
+                summary=None,
+                error=None,
+            )
+
+        thread = threading.Thread(
+            target=_run_deep_scan_job, args=(index_dir, config, corpus_root, log_dir), daemon=True
+        )
+        thread.start()
+        return jsonify({"status": "started"})
+
+    @app.get("/deep-scan/progress")
+    def deep_scan_progress():
+        with _deep_scan_lock:
+            return jsonify(dict(_deep_scan_state))
+
+    @app.post("/deep-scan/cancel")
+    def cancel_deep_scan():
+        with _deep_scan_lock:
+            if not _deep_scan_state["running"]:
+                return jsonify({"status": "not_running"}), 409
+            _deep_scan_state["cancel_requested"] = True
+        return jsonify({"status": "cancel_requested"})
 
     @app.post("/feedback")
     def do_feedback():

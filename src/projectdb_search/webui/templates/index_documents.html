@@ -4,7 +4,8 @@
 <p class="hint">
   Point this at the folder containing your PDFs, scans, and photos. Indexing
   only reads files there — it never modifies or moves your documents. Re-run
-  it any time to pick up new or changed files.
+  it any time to pick up new or changed files. This step only reads
+  filenames/folder names, so it's fast even over a large folder.
 </p>
 
 {% if error %}
@@ -36,8 +37,32 @@
   <p>
     <strong>Done.</strong> Indexed {{ summary.processed }} file(s), skipped
     {{ summary.skipped_unchanged }} unchanged, {{ summary.total_files }} total files found.
+    Search is ready to use now.
   </p>
   <p><a href="/">Go search &rarr;</a></p>
 </div>
 {% endif %}
+
+<div id="deep-scan-section" data-pending-count="{{ pending_deep_scan_count or 0 }}">
+{% if pending_deep_scan_count %}
+  <div class="index-summary">
+    <p>
+      <strong>{{ pending_deep_scan_count }}</strong> file(s) couldn't be fully identified from
+      filename/folder name alone — they're searchable by filename only for now. A deep scan
+      reads their PDF text / runs OCR to fill in the rest. It's slower (this is the part that
+      can take a while) but can run in the background, be cancelled, and resumed later.
+    </p>
+    <button id="deep-scan-start" class="search-button" type="button">Start deep scan</button>
+  </div>
+{% endif %}
+
+<div id="deep-scan-panel" class="deep-scan-panel" hidden>
+  <p class="hint">
+    Deep scan running — safe to leave this page; it keeps going in the background.
+  </p>
+  <div class="progress-bar"><div id="deep-scan-bar" class="progress-bar-fill"></div></div>
+  <p id="deep-scan-status" class="hint"></p>
+  <button id="deep-scan-cancel" class="feedback-btn" type="button">Cancel</button>
+</div>
+</div>
 {% endblock %}

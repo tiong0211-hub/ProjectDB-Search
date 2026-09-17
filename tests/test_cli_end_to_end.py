@@ -28,8 +28,17 @@ def test_top3_contains_expected_document_for_every_query(corpus_root: Path, tmp_
     index_dir = tmp_path / "index"
     expected_queries = json.loads(EXPECTED_QUERIES_PATH.read_text())
 
+    # Some expected queries only resolve via PDF-text/OCR fallback (see the
+    # fixtures' "note" fields) -- --deep-scan runs that pass too.
+    # --workers 1 keeps this deterministic/fast for a handful of test docs.
     runner = CliRunner()
-    index_result = runner.invoke(cli, ["index", "--corpus-root", str(corpus_root), "--index-dir", str(index_dir)])
+    index_result = runner.invoke(
+        cli,
+        [
+            "index", "--corpus-root", str(corpus_root), "--index-dir", str(index_dir),
+            "--deep-scan", "--workers", "1",
+        ],
+    )
     assert index_result.exit_code == 0, index_result.output
 
     failures = []

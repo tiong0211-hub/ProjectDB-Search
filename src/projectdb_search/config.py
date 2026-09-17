@@ -35,6 +35,9 @@ class ExtractionConfig:
     ocr_confidence_threshold: float
     pdf_extensions: set[str]
     image_extensions: set[str]
+    max_fallback_pages: int
+    ocr_max_side_px: int
+    deep_scan_workers: int
 
 
 @dataclass
@@ -84,6 +87,9 @@ def load_config(path: Path | None = None) -> AppConfig:
             image_extensions=set(
                 extraction_raw.get("image_extensions", [".jpg", ".jpeg", ".png", ".tif", ".tiff"])
             ),
+            max_fallback_pages=extraction_raw.get("max_fallback_pages", 2),
+            ocr_max_side_px=extraction_raw.get("ocr_max_side_px", 2400),
+            deep_scan_workers=extraction_raw.get("deep_scan_workers", 0),
         ),
         raw=raw,
     )

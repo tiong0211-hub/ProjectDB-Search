@@ -44,7 +44,10 @@ class DocumentRecord:
     keywords: list[str] = field(default_factory=list)
 
     source_of_metadata: str = "filename"  # e.g. "filename", "filename+pdf_text", "filename+ocr"
-    extraction_status: str = "ok"  # "ok" | "needs_review"
+    # "ok" | "pending_deep_scan" (filename pass alone couldn't fill the
+    # required fields; PDF-text/OCR fallback hasn't run yet -- see
+    # indexer/pipeline.py's run_pipeline/run_deep_scan split) | "needs_review"
+    extraction_status: str = "ok"
     ocr_confidence: Optional[float] = None
     indexed_at: str = ""
     schema_version: int = 1

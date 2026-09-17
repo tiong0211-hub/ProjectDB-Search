@@ -81,10 +81,12 @@ On a Windows machine (a clean VM is ideal — no Python installed):
 2. Double-click `run.bat`. A browser tab should open to the search UI
    within a couple seconds.
 3. Use "Index documents" to point at a small test folder, confirm it
-   indexes without errors, then search and open a result.
-4. If a PDF needs OCR fallback, confirm it completes (this is the step
-   most likely to fail if `tessdata/` wasn't copied correctly — check
-   `run_console.bat`'s output for the actual error).
+   indexes without errors (this filename-only pass should finish in
+   seconds), then search and open a result.
+4. If it reports documents pending a deep scan, click "Start deep scan" and
+   confirm it completes (this is the step most likely to fail if
+   `tessdata/` wasn't copied correctly — check `run_console.bat`'s output,
+   or the review queue page, for the actual error).
 
 ## 4. Ship it
 
