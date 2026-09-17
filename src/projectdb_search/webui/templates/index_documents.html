@@ -14,7 +14,7 @@
   <p class="error">{{ error }}</p>
 {% endif %}
 
-<form method="post" action="/index-documents" class="index-form">
+<form method="post" action="/index-documents" class="index-form" id="index-form">
   <label for="corpus_root">Document folder (local path)</label>
   <input
     type="text" id="corpus_root" name="corpus_root" autocomplete="off"
@@ -24,8 +24,14 @@
   <label class="checkbox-label">
     <input type="checkbox" name="rebuild"> Force full re-index (ignore what's already indexed)
   </label>
-  <button type="submit" class="search-button">Build index</button>
+  <button type="submit" class="search-button" id="index-submit">Build index</button>
 </form>
+
+<div id="index-progress-panel" class="deep-scan-panel" hidden>
+  <div class="progress-bar"><div id="index-progress-bar" class="progress-bar-fill"></div></div>
+  <p id="index-progress-status" class="hint"></p>
+  <p id="index-progress-file" class="hint index-progress-file"></p>
+</div>
 
 {% if summary %}
 {% if summary.corpus_root_changed %}

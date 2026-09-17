@@ -57,6 +57,19 @@ from projectdb_search.storage.inverted_index import (
 
 REQUIRED_FIELDS = ("project_name", "doc_type")
 
+# Stage 1 progress phases, reported through `run_pipeline`'s
+# progress_callback(phase, done, total, current_file).
+PHASE_SCANNING = "scanning"  # walking the folder; `total` isn't known yet
+PHASE_INDEXING = "indexing"  # per-file pass; done/total are meaningful
+PHASE_BUILDING = "building"  # rebuilding + writing the inverted index
+
+IndexProgress = Callable[[str, int, int, str], None]
+
+# Reporting every single file would cost more (lock + dict writes, and a
+# repaint's worth of noise) than the work being reported: a file's
+# filename pass is measured in microseconds.
+PROGRESS_EVERY = 200
+
 
 @dataclass
 class IndexRunSummary:
@@ -214,11 +227,22 @@ def run_pipeline(
     config: AppConfig,
     force_rebuild: bool = False,
     log_dir: Path | None = None,
+    progress_callback: IndexProgress | None = None,
 ) -> IndexRunSummary:
     """Stage 1: filename/folder metadata only. Never opens a PDF or image's
     contents -- see the module docstring for why. Always fast, and always
     what makes the index searchable, even before any deep scan has run.
+
+    `progress_callback(phase, done, total, current_file)` reports which of
+    the three phases is running (see `IndexProgress`). The folder scan is
+    reported separately because it can't report a percentage -- the total
+    isn't known until it finishes -- and on a network/OneDrive corpus it is
+    the phase most likely to take visible time.
     """
+    def report(phase: str, done: int = 0, total: int = 0, current_file: str = "") -> None:
+        if progress_callback is not None:
+            progress_callback(phase, done, total, current_file)
+
     corpus_root = corpus_root.resolve()
     index_dir.mkdir(parents=True, exist_ok=True)
     log_dir = log_dir or (index_dir.parent / "logs")
@@ -236,18 +260,25 @@ def run_pipeline(
 
     manifest = {} if force_rebuild else index_store.load_manifest(index_dir)
     supported_extensions = config.extraction.pdf_extensions | config.extraction.image_extensions
+    report(PHASE_SCANNING)
     files = _walk_corpus(corpus_root, supported_extensions)
     parser = FilenameParser(config)
 
+    total_files = len(files)
     processed = 0
     skipped = 0
     # Records written during this run, kept so the index rebuild below
     # doesn't have to read back from disk what we just wrote.
     fresh_records: dict[str, DocumentRecord] = {}
-    for file_path in files:
+    for position, file_path in enumerate(files, start=1):
         relative = file_path.relative_to(corpus_root)
         relative_str = str(relative)
         stat_result = file_path.stat()  # the loop's one stat per file
+
+        # Reported for skipped files too: "3,000 / 20,000" should reflect
+        # how far through the folder we are, not just how much work landed.
+        if progress_callback is not None and (position % PROGRESS_EVERY == 0 or position == total_files):
+            report(PHASE_INDEXING, position, total_files, relative_str)
 
         if not force_rebuild and not index_store.has_changed(file_path, manifest, relative_str, stat_result):
             skipped += 1
@@ -284,6 +315,7 @@ def run_pipeline(
 
     index_store.save_manifest(index_dir, manifest)
 
+    report(PHASE_BUILDING, total_files, total_files)
     all_records = index_store.load_all_records(index_dir, skip_doc_ids=set(fresh_records))
     all_records.extend(fresh_records.values())
     inverted = build_inverted_index(all_records)

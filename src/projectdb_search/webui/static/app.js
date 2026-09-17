@@ -1,3 +1,118 @@
+function initIndexProgress() {
+  const form = document.getElementById("index-form");
+  if (!form) return;
+
+  const submitBtn = document.getElementById("index-submit");
+  const panel = document.getElementById("index-progress-panel");
+  const bar = document.getElementById("index-progress-bar");
+  const status = document.getElementById("index-progress-status");
+  const fileLine = document.getElementById("index-progress-file");
+  let pollHandle = null;
+
+  function render(state) {
+    const done = state.done || 0;
+    const total = state.total || 0;
+    if (state.phase === "scanning") {
+      bar.style.width = "0%";
+      status.textContent = "Scanning folder for documents…";
+      fileLine.textContent = "";
+    } else if (state.phase === "building") {
+      bar.style.width = "100%";
+      status.textContent = "Building search index…";
+      fileLine.textContent = "";
+    } else if (total > 0) {
+      bar.style.width = Math.round((done / total) * 100) + "%";
+      status.textContent = "Reading filenames: " + done.toLocaleString() + " / " + total.toLocaleString();
+      fileLine.textContent = state.current_file || "";
+    }
+  }
+
+  function stopPolling() {
+    if (pollHandle) {
+      clearInterval(pollHandle);
+      pollHandle = null;
+    }
+  }
+
+  function poll() {
+    fetch("/index-documents/progress")
+      .then(function (r) { return r.json(); })
+      .then(function (state) {
+        if (state.running) {
+          panel.hidden = false;
+          render(state);
+          return;
+        }
+        stopPolling();
+        if (state.error) {
+          status.textContent = "Error: " + state.error;
+          fileLine.textContent = "";
+          submitBtn.disabled = false;
+          submitBtn.textContent = "Build index";
+          return;
+        }
+        // The finished run's summary is rendered server-side on the next
+        // page load, along with the refreshed pending-deep-scan section.
+        window.location.reload();
+      })
+      .catch(function () {
+        stopPolling();
+        status.textContent = "Lost contact with the indexer.";
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Build index";
+      });
+  }
+
+  function startPolling() {
+    if (pollHandle) return;
+    poll();
+    pollHandle = setInterval(poll, 500);
+  }
+
+  form.addEventListener("submit", function (event) {
+    event.preventDefault();
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Indexing…";
+    panel.hidden = false;
+    status.textContent = "Starting…";
+    fileLine.textContent = "";
+    bar.style.width = "0%";
+
+    fetch("/index-documents/start", { method: "POST", body: new FormData(form) })
+      .then(function (r) {
+        if (r.status === 400) {
+          return r.json().then(function (body) { throw new Error(body.error || "invalid folder"); });
+        }
+        if (!r.ok && r.status !== 409) throw new Error("failed to start");
+        startPolling();
+      })
+      .catch(function (err) {
+        panel.hidden = false;
+        status.textContent = err.message || "Failed to start indexing.";
+        fileLine.textContent = "";
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Build index";
+      });
+  });
+
+  // An index started from another tab (or before a reload) keeps running
+  // in the background -- pick its progress back up instead of showing an
+  // idle form.
+  fetch("/index-documents/progress")
+    .then(function (r) { return r.json(); })
+    .then(function (state) {
+      if (!state.running) return;
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Indexing…";
+      panel.hidden = false;
+      render(state);
+      startPolling();
+    })
+    .catch(function () { /* nothing running, or page has no indexer */ });
+}
+
+document.addEventListener("DOMContentLoaded", initIndexProgress);
+
 function initDeepScan() {
   const section = document.getElementById("deep-scan-section");
   if (!section) return;

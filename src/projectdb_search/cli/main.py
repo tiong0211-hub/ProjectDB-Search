@@ -24,7 +24,12 @@ from projectdb_search import runtime_paths
 from projectdb_search.config import load_config
 from projectdb_search.indexer import logging_utils
 from projectdb_search.indexer.filename_parser import FilenameParser
-from projectdb_search.indexer.pipeline import run_deep_scan, run_pipeline
+from projectdb_search.indexer.pipeline import (
+    PHASE_BUILDING,
+    PHASE_SCANNING,
+    run_deep_scan,
+    run_pipeline,
+)
 from projectdb_search.search import feedback as feedback_module
 from projectdb_search.search import tuning
 from projectdb_search.search.llm import get_llm_backend
@@ -66,7 +71,19 @@ def index_cmd(
     config = load_config()
     log_dir = log_dir or (index_dir.parent / "logs")
 
-    summary = run_pipeline(corpus_root, index_dir, config, force_rebuild=rebuild, log_dir=log_dir)
+    def on_progress(phase: str, done: int, total: int, current_file: str) -> None:
+        if phase == PHASE_SCANNING:
+            line = "  scanning folder..."
+        elif phase == PHASE_BUILDING:
+            line = "  building search index..."
+        else:
+            line = f"  {done}/{total} files: {current_file}"
+        click.echo(f"\r{line}" + " " * 20, nl=False, err=True)
+
+    summary = run_pipeline(
+        corpus_root, index_dir, config, force_rebuild=rebuild, log_dir=log_dir, progress_callback=on_progress
+    )
+    click.echo("", err=True)
     if summary.corpus_root_changed:
         click.echo(
             f"Note: this index previously pointed at a different folder. Cleared it and rebuilt "

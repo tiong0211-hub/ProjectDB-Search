@@ -216,3 +216,14 @@ main {
   background: var(--accent);
   transition: width 0.3s ease;
 }
+
+/* Long paths shouldn't reflow the panel as they scroll past. */
+.index-progress-file {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-height: 1.2em;
+  margin: 0;
+}

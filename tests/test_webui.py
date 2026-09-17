@@ -304,6 +304,68 @@ def test_index_documents_post_rejects_nonexistent_path(tmp_path: Path, app_confi
     assert b"is not a folder that exists" in resp.data
 
 
+def _wait_until_index_done(client, timeout: float = 10.0) -> dict:
+    deadline = time.monotonic() + timeout
+    progress = client.get("/index-documents/progress").get_json()
+    while progress["running"] and time.monotonic() < deadline:
+        time.sleep(0.02)
+        progress = client.get("/index-documents/progress").get_json()
+    if progress["running"]:
+        pytest.fail("indexing did not finish in time")
+    return progress
+
+
+def test_index_documents_start_runs_in_background_and_reports_progress(
+    corpus_root: Path, tmp_path: Path, app_config: AppConfig
+):
+    index_dir = tmp_path / "index"
+    app = create_app(index_dir, tmp_path / "logs", None, app_config)
+    app.testing = True
+    client = app.test_client()
+
+    start = client.post("/index-documents/start", data={"corpus_root": str(corpus_root)})
+    assert start.status_code == 200
+    assert start.get_json()["status"] == "started"
+
+    progress = _wait_until_index_done(client)
+    assert progress["error"] is None
+    assert progress["summary"]["total_files"] > 0
+    assert progress["summary"]["processed"] == progress["summary"]["total_files"]
+    assert app.config["CORPUS_ROOT"] == corpus_root.resolve()
+
+    # The finished run's summary is handed to the next page load once.
+    page = client.get("/index-documents")
+    assert b"Done." in page.data
+    assert b"Done." not in client.get("/index-documents").data
+
+
+def test_index_documents_start_rejects_a_nonexistent_folder(tmp_path: Path, app_config: AppConfig):
+    app = create_app(tmp_path / "index", tmp_path / "logs", None, app_config)
+    app.testing = True
+    client = app.test_client()
+
+    resp = client.post("/index-documents/start", data={"corpus_root": str(tmp_path / "nope")})
+
+    assert resp.status_code == 400
+    assert "is not a folder that exists" in resp.get_json()["error"]
+    assert client.get("/index-documents/progress").get_json()["running"] is False
+
+
+def test_index_documents_start_rejects_a_concurrent_run(
+    corpus_root: Path, tmp_path: Path, app_config: AppConfig
+):
+    index_dir = tmp_path / "index"
+    app = create_app(index_dir, tmp_path / "logs", None, app_config)
+    app.testing = True
+    client = app.test_client()
+
+    assert client.post("/index-documents/start", data={"corpus_root": str(corpus_root)}).status_code == 200
+    second = client.post("/index-documents/start", data={"corpus_root": str(corpus_root)})
+    assert second.status_code == 409
+
+    _wait_until_index_done(client)  # don't leave a thread running past the test
+
+
 def test_index_documents_page_shows_pending_deep_scan_count(
     corpus_root: Path, built_index: tuple[Path, Path, InvertedIndex], app_config: AppConfig
 ):
