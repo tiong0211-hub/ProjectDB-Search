@@ -14,6 +14,7 @@ from pathlib import Path
 
 import click
 
+from projectdb_search import runtime_paths
 from projectdb_search.config import load_config
 from projectdb_search.indexer import logging_utils
 from projectdb_search.indexer.filename_parser import FilenameParser
@@ -32,6 +33,7 @@ DEFAULT_INDEX_DIR = Path("data/index")
 @click.group()
 def cli() -> None:
     """ProjectDB-Search: find which document (and why) matches a query."""
+    runtime_paths.configure_tesseract()
 
 
 @cli.command("index")

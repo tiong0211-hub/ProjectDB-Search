@@ -39,6 +39,13 @@ Implemented so far:
   same code can later point at an internal Claude Enterprise gateway
   instead of the public Anthropic API, with no code change
 - A CLI (`index` / `search` / `serve` / `review-queue`)
+- "Rough" query tolerance: Korean (Hangul) filenames/queries tokenize
+  correctly (previously silently dropped — the tokenizer treated any
+  non-ASCII character as a delimiter), and keyword matching has a second,
+  lower-weighted tier for a substring relationship (e.g. `compressor`
+  against a merged token like `compressorstation`) or a likely
+  single-character typo — never applied to purely numeric tokens (years,
+  revision numbers), which must match exactly
 - Test fixtures + an automated Top-3 correctness check + a search-speed
   benchmark
 

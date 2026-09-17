@@ -57,3 +57,24 @@ def test_stopwords_and_short_tokens_are_dropped(app_config: AppConfig):
     assert "3" not in meta.keywords  # single-char tokens filtered
     assert "unit" in meta.keywords
     assert "review" in meta.keywords
+
+
+def test_korean_filenames_are_tokenized_into_keywords(app_config: AppConfig):
+    parser = FilenameParser(app_config)
+    meta = parser.parse_freetext("압축기_데이터시트_2020")
+    assert "압축기" in meta.keywords
+    assert "데이터시트" in meta.keywords
+    assert meta.year == 2020
+
+
+def test_korean_and_english_mixed_text_both_tokenize(app_config: AppConfig, tmp_path: Path):
+    parser = FilenameParser(app_config)
+    file_path = tmp_path / "압축기실" / "CompressorRoom_Photo_2021.jpg"
+    file_path.parent.mkdir(parents=True)
+    file_path.touch()
+
+    meta = parser.parse(tmp_path, file_path)
+
+    assert "압축기실" in meta.keywords
+    assert meta.doc_type == "photo"
+    assert meta.year == 2021

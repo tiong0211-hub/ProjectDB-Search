@@ -33,14 +33,19 @@ def extract_text_layer(path: Path) -> str | None:
     return "\n".join(pages_text).strip()
 
 
-def render_pages_to_images(path: Path, dpi: int = 200) -> list[Image.Image]:
+def render_pages_to_images(path: Path, dpi: int = 200, poppler_path: str | None = None) -> list[Image.Image]:
     """Rasterize every page of a PDF to a PIL image, for OCR fallback.
+
+    `poppler_path` is passed straight through to pdf2image rather than
+    relying on poppler being on PATH -- the packaged (embeddable-Python)
+    build sets this to the bundled poppler folder via
+    `runtime_paths.configure_poppler_path()`; in dev, PATH is used (None).
 
     Returns [] (rather than raising) for a PDF that can't be rasterized at
     all (corrupt/truncated file) — a legacy archive will have some of
     these, and one unreadable file must never abort the whole indexing run.
     """
     try:
-        return convert_from_path(str(path), dpi=dpi)
+        return convert_from_path(str(path), dpi=dpi, poppler_path=poppler_path)
     except Exception:
         return []

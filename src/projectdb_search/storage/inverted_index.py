@@ -31,6 +31,53 @@ def normalize(value: str) -> str:
     return value.strip().lower()
 
 
+def _levenshtein_at_most_one(a: str, b: str) -> bool:
+    """True if `a` and `b` differ by at most one insertion, deletion, or
+    substitution. Callers already guarantee len(a) and len(b) differ by at
+    most 1, so this never needs full Levenshtein DP.
+    """
+    if a == b:
+        return True
+    if len(a) == len(b):
+        mismatches = sum(1 for x, y in zip(a, b) if x != y)
+        return mismatches <= 1
+    if len(a) > len(b):
+        a, b = b, a
+    i = j = skipped = 0
+    while i < len(a) and j < len(b):
+        if a[i] != b[j]:
+            skipped += 1
+            if skipped > 1:
+                return False
+            j += 1
+        else:
+            i += 1
+            j += 1
+    return True
+
+
+def is_loose_match(query_keyword: str, indexed_keyword: str) -> bool:
+    """'Roughly the same word': one contains the other (handles a query
+    like 'compressor' against a merged token like 'compressorstation', or a
+    truncated/rough query), or they differ by a single likely typo. The
+    typo check only applies to tokens of 4+ characters -- for shorter
+    tokens, "differs by one character" is too loose to mean anything.
+    """
+    a, b = normalize(query_keyword), normalize(indexed_keyword)
+    if a == b:
+        return True
+    if a.isdigit() or b.isdigit():
+        # Numbers (years, revision counters, etc.) are exact identifiers --
+        # "2018" must never loosely match "2019" or "2015" just because
+        # they're one character apart.
+        return False
+    if a in b or b in a:
+        return True
+    if len(a) >= 4 and len(b) >= 4 and abs(len(a) - len(b)) <= 1:
+        return _levenshtein_at_most_one(a, b)
+    return False
+
+
 @dataclass
 class InvertedIndex:
     field_index: dict[str, dict[str, list[str]]] = field(default_factory=dict)
@@ -42,6 +89,19 @@ class InvertedIndex:
 
     def keyword_matches(self, keyword: str) -> list[str]:
         return self.keyword_index.get(normalize(keyword), [])
+
+    def keyword_matches_loose(self, keyword: str) -> list[str]:
+        """Documents whose keyword is 'roughly' the query keyword (see
+        `is_loose_match`) but not an exact match. Scans the distinct
+        keyword vocabulary, not documents, so it stays cheap even at
+        thousands of documents.
+        """
+        normalized = normalize(keyword)
+        doc_ids: list[str] = []
+        for kw, ids in self.keyword_index.items():
+            if kw != normalized and is_loose_match(normalized, kw):
+                doc_ids.extend(ids)
+        return doc_ids
 
     def all_doc_ids(self) -> set[str]:
         ids: set[str] = set()

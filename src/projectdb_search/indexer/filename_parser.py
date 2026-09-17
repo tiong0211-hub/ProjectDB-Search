@@ -18,7 +18,10 @@ from pathlib import Path
 from projectdb_search.config import AppConfig
 from projectdb_search.models import PartialMetadata
 
-_TOKEN_SPLIT_RE = re.compile(r"[^a-zA-Z0-9&]+")
+# 가-힣 = the modern Hangul syllable block. Without it, Korean
+# filenames/queries (e.g. "압축기_데이터시트_2020") tokenize to nothing at
+# all -- every non-ASCII character is otherwise treated as a delimiter.
+_TOKEN_SPLIT_RE = re.compile(r"[^a-zA-Z0-9&가-힣]+")
 _STOPWORDS = {
     "the", "a", "an", "for", "of", "and", "or", "to", "in", "on", "at",
     "is", "was", "from", "with", "pdf", "jpg", "jpeg", "png", "tif", "tiff",

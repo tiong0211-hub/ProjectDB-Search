@@ -15,7 +15,7 @@ from projectdb_search.models import DocumentRecord
 from projectdb_search.search.llm.base import LLMBackend
 from projectdb_search.search.query_parser import ParsedQuery
 from projectdb_search.storage.index_store import load_record
-from projectdb_search.storage.inverted_index import INDEXED_FIELDS, InvertedIndex
+from projectdb_search.storage.inverted_index import INDEXED_FIELDS, InvertedIndex, is_loose_match
 from pathlib import Path
 
 MatchedField = tuple[str, object, str]  # (field_name, value, "exact" | "partial" | "keyword")
@@ -47,12 +47,38 @@ def gather_candidates(query: ParsedQuery, inverted: InvertedIndex) -> set[str]:
 
     for keyword in query.keywords:
         candidates.update(inverted.keyword_matches(keyword))
+        candidates.update(inverted.keyword_matches_loose(keyword))
 
     return candidates
 
 
 def _normalize(value: object) -> str:
     return str(value).strip().lower()
+
+
+def _keyword_overlap(
+    query_keywords: list[str], record_keywords: list[str]
+) -> tuple[list[str], list[tuple[str, str]]]:
+    """Splits query/record keyword overlap into exact hits and "rough"
+    hits (substring relationship, e.g. 'compressor' vs a merged token like
+    'compressorstation', or a likely single-character typo — see
+    `is_loose_match`). Rough hits score lower (see `score_document`) but
+    still surface the document instead of missing it entirely.
+    """
+    record_set = set(record_keywords)
+    exact = [k for k in query_keywords if k in record_set]
+    exact_set = set(exact)
+
+    loose: list[tuple[str, str]] = []
+    for qk in query_keywords:
+        if qk in exact_set:
+            continue
+        for rk in record_keywords:
+            if is_loose_match(qk, rk):
+                loose.append((qk, rk))
+                break
+
+    return exact, loose
 
 
 def score_document(query: ParsedQuery, record: DocumentRecord, ranking: RankingConfig) -> ScoredMatch:
@@ -76,11 +102,15 @@ def score_document(query: ParsedQuery, record: DocumentRecord, ranking: RankingC
         score += ranking.weights.get("year", 0)
         matched_fields.append(("year", record.year, "exact"))
 
-    keyword_hits = [k for k in query.keywords if k in record.keywords]
-    if keyword_hits:
-        capped = min(len(keyword_hits), ranking.max_keyword_hits)
+    exact_hits, loose_hits = _keyword_overlap(query.keywords, record.keywords)
+    if exact_hits:
+        capped = min(len(exact_hits), ranking.max_keyword_hits)
         score += capped * ranking.weights.get("keyword", 0)
-        matched_fields.append(("keywords", keyword_hits, "keyword"))
+        matched_fields.append(("keywords", exact_hits, "keyword"))
+    if loose_hits:
+        capped = min(len(loose_hits), ranking.max_keyword_hits)
+        score += capped * ranking.weights.get("keyword", 0) * 0.6
+        matched_fields.append(("keywords", [f"{qk}~{rk}" for qk, rk in loose_hits], "keyword_loose"))
 
     if record.extraction_status == "needs_review":
         score *= 0.85
@@ -102,7 +132,10 @@ def build_justification(match: ScoredMatch) -> str:
     parts = []
     for field_name, value, kind in match.matched_fields:
         if field_name == "keywords":
-            parts.append(f"matched keywords: {', '.join(value)}")
+            if kind == "keyword_loose":
+                parts.append(f"loosely matched keywords: {', '.join(value)}")
+            else:
+                parts.append(f"matched keywords: {', '.join(value)}")
         elif kind == "exact":
             parts.append(f"{field_name.replace('_', ' ')} matches '{value}'")
         else:

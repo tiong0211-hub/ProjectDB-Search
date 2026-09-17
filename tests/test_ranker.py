@@ -113,3 +113,36 @@ def test_is_ambiguous_false_when_top_result_is_strong_and_well_separated(app_con
     weak = score_document(ParsedQuery(raw_query="q"), _record(doc_id="doc2"), ranking)
 
     assert is_ambiguous([strong, weak], ranking) is False
+
+
+def test_loose_keyword_match_scores_lower_than_exact(app_config: AppConfig):
+    record = _record(keywords=["compressorstation"])
+
+    exact_query = ParsedQuery(raw_query="q", keywords=["compressorstation"])
+    loose_query = ParsedQuery(raw_query="q", keywords=["compressor"])  # substring of the indexed token
+
+    exact_match = score_document(exact_query, record, app_config.ranking)
+    loose_match = score_document(loose_query, record, app_config.ranking)
+
+    assert loose_match.score > 0
+    assert loose_match.score < exact_match.score
+
+
+def test_loose_keyword_match_tolerates_a_single_typo(app_config: AppConfig):
+    record = _record(keywords=["compressor"])
+    query = ParsedQuery(raw_query="q", keywords=["compresor"])  # missing one "s"
+
+    match = score_document(query, record, app_config.ranking)
+
+    assert match.score > 0
+    assert any(kind == "keyword_loose" for _, _, kind in match.matched_fields)
+
+
+def test_justification_distinguishes_loose_from_exact_keyword_matches(app_config: AppConfig):
+    record = _record(keywords=["compressorstation"])
+    query = ParsedQuery(raw_query="q", keywords=["compressor"])
+
+    match = score_document(query, record, app_config.ranking)
+    text = build_justification(match)
+
+    assert "loosely matched keywords" in text
