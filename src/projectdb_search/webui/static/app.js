@@ -98,6 +98,32 @@ function initDeepScan() {
 document.addEventListener("DOMContentLoaded", initDeepScan);
 
 document.addEventListener("click", function (event) {
+  const btn = event.target.closest(".reveal-btn");
+  if (!btn) return;
+
+  const original = btn.textContent;
+  btn.disabled = true;
+  fetch("/reveal/" + btn.dataset.docId, { method: "POST" })
+    .then(function (response) {
+      if (response.status === 501) {
+        btn.textContent = "Not supported here";
+        return;
+      }
+      if (!response.ok) throw new Error("request failed");
+      btn.textContent = "Opened ✓";
+    })
+    .catch(function () {
+      btn.textContent = "Failed";
+    })
+    .finally(function () {
+      setTimeout(function () {
+        btn.textContent = original;
+        btn.disabled = false;
+      }, 1500);
+    });
+});
+
+document.addEventListener("click", function (event) {
   const btn = event.target.closest(".feedback-btn");
   if (!btn) return;
 

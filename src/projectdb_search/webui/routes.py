@@ -26,6 +26,7 @@ from projectdb_search.search.ranker import SearchResult, build_justification
 from projectdb_search.search.ranker import search as run_search
 from projectdb_search.storage import index_store
 from projectdb_search.storage.inverted_index import load_inverted_index
+from projectdb_search.webui.reveal import reveal_in_file_manager
 
 # Deep-scan (PDF-text/OCR fallback) runs in a background thread so the
 # request that starts it returns immediately -- the browser polls
@@ -243,6 +244,30 @@ def register_routes(app: Flask) -> None:
         if not full_path.exists():
             abort(404)
         return send_file(full_path)
+
+    @app.post("/reveal/<doc_id>")
+    def reveal_file(doc_id: str):
+        """Opens the host machine's file manager at this document's folder,
+        with the file selected -- see webui/reveal.py for why this is only
+        safe on a localhost-only, single-user server like this one.
+        """
+        index_dir = current_app.config["INDEX_DIR"]
+        corpus_root = current_app.config["CORPUS_ROOT"]
+        try:
+            record = index_store.load_record(index_dir, doc_id)
+        except FileNotFoundError:
+            abort(404)
+
+        if corpus_root is None:
+            abort(500, "Corpus root is unknown. Re-run `projectdb-search index` to record it.")
+
+        full_path = Path(corpus_root) / record.file_path
+        if not full_path.exists():
+            abort(404)
+
+        if not reveal_in_file_manager(full_path):
+            return jsonify({"status": "unsupported"}), 501
+        return jsonify({"status": "ok"})
 
     @app.get("/review-queue")
     def review_queue_page():

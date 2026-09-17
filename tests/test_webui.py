@@ -131,6 +131,62 @@ def test_get_file_404s_for_unknown_doc_id(
     assert resp.status_code == 404
 
 
+def test_reveal_file_calls_file_manager_with_the_resolved_path(
+    corpus_root: Path, built_index: tuple[Path, Path, InvertedIndex], app_config: AppConfig, monkeypatch
+):
+    from projectdb_search.models import make_doc_id
+    from projectdb_search.webui import routes as routes_module
+
+    calls = []
+    monkeypatch.setattr(routes_module, "reveal_in_file_manager", lambda path: calls.append(path) or True)
+
+    client, _ = _client(corpus_root, built_index, app_config)
+    doc_id = make_doc_id("RiversidePlant/Isometric/HX-203_Isometric_Rev2.pdf")
+    resp = client.post(f"/reveal/{doc_id}")
+
+    assert resp.status_code == 200
+    assert resp.get_json() == {"status": "ok"}
+    assert len(calls) == 1
+    assert calls[0] == corpus_root / "RiversidePlant/Isometric/HX-203_Isometric_Rev2.pdf"
+
+
+def test_reveal_file_404s_for_unknown_doc_id(
+    corpus_root: Path, built_index: tuple[Path, Path, InvertedIndex], app_config: AppConfig
+):
+    client, _ = _client(corpus_root, built_index, app_config)
+    resp = client.post("/reveal/does-not-exist")
+    assert resp.status_code == 404
+
+
+def test_reveal_file_404s_when_the_file_no_longer_exists_on_disk(
+    corpus_root: Path, built_index: tuple[Path, Path, InvertedIndex], app_config: AppConfig
+):
+    from projectdb_search.models import make_doc_id
+
+    doc_id = make_doc_id("RiversidePlant/Isometric/HX-203_Isometric_Rev2.pdf")
+    (corpus_root / "RiversidePlant/Isometric/HX-203_Isometric_Rev2.pdf").unlink()
+
+    client, _ = _client(corpus_root, built_index, app_config)
+    resp = client.post(f"/reveal/{doc_id}")
+    assert resp.status_code == 404
+
+
+def test_reveal_file_returns_501_when_unsupported_on_this_platform(
+    corpus_root: Path, built_index: tuple[Path, Path, InvertedIndex], app_config: AppConfig, monkeypatch
+):
+    from projectdb_search.models import make_doc_id
+    from projectdb_search.webui import routes as routes_module
+
+    monkeypatch.setattr(routes_module, "reveal_in_file_manager", lambda path: False)
+
+    client, _ = _client(corpus_root, built_index, app_config)
+    doc_id = make_doc_id("RiversidePlant/Isometric/HX-203_Isometric_Rev2.pdf")
+    resp = client.post(f"/reveal/{doc_id}")
+
+    assert resp.status_code == 501
+    assert resp.get_json() == {"status": "unsupported"}
+
+
 def test_review_queue_page_lists_low_confidence_entries(
     corpus_root: Path, deep_scanned_index: tuple[Path, Path, InvertedIndex], app_config: AppConfig
 ):

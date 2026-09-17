@@ -16,6 +16,7 @@
         <div class="result-justification">{{ r.justification }}</div>
         <div class="result-actions">
           <a href="/file/{{ r.doc_id }}" target="_blank" rel="noopener">Open file</a>
+          <button class="reveal-btn" type="button" data-doc-id="{{ r.doc_id }}">Show in folder</button>
           <button class="feedback-btn correct" data-doc-id="{{ r.doc_id }}" data-correct="true">Correct</button>
           <button class="feedback-btn incorrect" data-doc-id="{{ r.doc_id }}" data-correct="false">Not this one</button>
         </div>

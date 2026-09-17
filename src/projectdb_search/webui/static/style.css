@@ -113,7 +113,7 @@ main {
   font-size: 0.85rem;
 }
 
-.feedback-btn {
+.feedback-btn, .reveal-btn {
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--fg);
@@ -123,7 +123,8 @@ main {
   font-size: 0.85rem;
 }
 
-.feedback-btn:hover { border-color: var(--accent); }
+.feedback-btn:hover, .reveal-btn:hover { border-color: var(--accent); }
+.feedback-btn:disabled, .reveal-btn:disabled { opacity: 0.6; cursor: default; }
 .feedback-thanks, .feedback-error { color: var(--muted); font-size: 0.85rem; }
 
 .empty { color: var(--muted); }
