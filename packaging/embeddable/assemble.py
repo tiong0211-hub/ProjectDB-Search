@@ -3,18 +3,28 @@ deployment. This is the alternative to a PyInstaller/exe build: no Windows
 machine is needed to build it (this script is plain-stdlib Python and runs
 anywhere), and there's no self-extracting-exe pattern to trip antivirus.
 
-Three inputs must be downloaded manually first (see BUILD.md for exact
-links) -- python.org and github.com are not reachable from some sandboxed
-dev environments, so this script can't fetch them itself:
-  1. The official Python 3.11 Windows embeddable package (a .zip)
-  2. A Windows Tesseract-OCR build (folder with tesseract.exe + tessdata/)
-  3. A Windows Poppler build (folder with pdftoppm.exe etc.)
+Needs a Python runtime and a Tesseract build for Windows, supplied either
+way:
+  - Recommended, zero manual downloads: run `fetch_conda_runtime.py` first
+    (pulls both from conda-forge, which is reachable even where
+    python.org/github.com are not), then pass its output directories via
+    `--python-dir` / `--tesseract-dir`.
+  - Manual: download the official Python embeddable .zip and a Tesseract
+    build yourself (see BUILD.md for links), and pass
+    `--python-embed-zip` / `--tesseract-dir`.
+
+(PDF page rendering uses pypdfium2, a compiled wheel already in
+wheels/ -- no separate Poppler binary is needed either way.)
 
 Usage:
     python packaging/embeddable/assemble.py \
+        --python-dir packaging/embeddable/conda_runtime/python \
+        --tesseract-dir packaging/embeddable/conda_runtime/tesseract
+
+    # or, with the manual python.org download:
+    python packaging/embeddable/assemble.py \
         --python-embed-zip /path/to/python-3.11.9-embed-amd64.zip \
-        --tesseract-dir /path/to/extracted/tesseract \
-        --poppler-dir /path/to/extracted/poppler/Library/bin
+        --tesseract-dir /path/to/extracted/tesseract
 
 Produces packaging/embeddable/dist/ProjectDB-Search/ -- zip that folder and
 carry it into the internal network as-is. `run.bat` there needs nothing
@@ -103,11 +113,16 @@ def _write_launchers(out_dir: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--python-embed-zip", required=True, type=Path)
+    python_source = parser.add_mutually_exclusive_group(required=True)
+    python_source.add_argument(
+        "--python-dir", type=Path, help="Pre-extracted Python runtime dir (e.g. from fetch_conda_runtime.py)"
+    )
+    python_source.add_argument(
+        "--python-embed-zip", type=Path, help="The official python.org Windows embeddable package .zip"
+    )
     parser.add_argument(
         "--tesseract-dir", required=True, type=Path, help="Folder containing tesseract.exe + tessdata/"
     )
-    parser.add_argument("--poppler-dir", required=True, type=Path, help="Folder containing pdftoppm.exe etc.")
     parser.add_argument("--wheels-dir", default=DEFAULT_WHEELS_DIR, type=Path)
     parser.add_argument("--out", default=DEFAULT_OUT_DIR, type=Path)
     args = parser.parse_args()
@@ -117,10 +132,16 @@ def main() -> None:
         shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True)
 
-    print("1/5 Unpacking Python embeddable distribution...")
     python_dir = out_dir / "python"
-    _unzip(args.python_embed_zip, python_dir)
-    _enable_site_packages(python_dir)
+    if args.python_dir:
+        print("1/5 Copying pre-extracted Python runtime...")
+        _copy_binaries(args.python_dir, python_dir, "Python runtime")
+        # A full conda-forge Python already supports site-packages natively
+        # (no ._pth stripping to undo), so nothing else to do here.
+    else:
+        print("1/5 Unpacking Python embeddable distribution...")
+        _unzip(args.python_embed_zip, python_dir)
+        _enable_site_packages(python_dir)
 
     print("2/5 Installing dependencies from vendored wheels...")
     _install_wheels(args.wheels_dir, python_dir / "Lib" / "site-packages")
@@ -128,9 +149,8 @@ def main() -> None:
     print("3/5 Copying app source + config...")
     _copy_app(out_dir)
 
-    print("4/5 Copying Tesseract + Poppler...")
+    print("4/5 Copying Tesseract...")
     _copy_binaries(args.tesseract_dir, out_dir / "tesseract", "Tesseract")
-    _copy_binaries(args.poppler_dir, out_dir / "poppler", "Poppler")
     if not (out_dir / "tesseract" / "tessdata").is_dir():
         print(
             "WARNING: no tessdata/ folder found under the tesseract dir -- OCR will fail without it.",

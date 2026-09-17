@@ -22,7 +22,6 @@ from pathlib import Path
 
 from PIL import Image
 
-from projectdb_search import runtime_paths
 from projectdb_search.config import AppConfig
 from projectdb_search.indexer import logging_utils, pdf_extractor
 from projectdb_search.indexer.filename_parser import FilenameParser
@@ -73,9 +72,7 @@ def run_pdf_fallback(
         return record
 
     # No usable text layer (scanned document) -> OCR.
-    images = pdf_extractor.render_pages_to_images(
-        file_path, dpi=config.extraction.ocr_dpi, poppler_path=runtime_paths.get_poppler_path()
-    )
+    images = pdf_extractor.render_pages_to_images(file_path, dpi=config.extraction.ocr_dpi)
     if not images:
         record.extraction_status = "needs_review"
         logging_utils.append_review_queue(log_dir, record.file_path, reason="unreadable_pdf", confidence=0.0)

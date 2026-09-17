@@ -15,10 +15,6 @@ def test_configure_tesseract_is_a_no_op_outside_a_bundle():
     runtime_paths.configure_tesseract()  # must not raise
 
 
-def test_get_poppler_path_is_none_outside_a_bundle():
-    assert runtime_paths.get_poppler_path() is None
-
-
 def test_bundle_root_detected_when_layout_matches(tmp_path: Path, monkeypatch):
     bundle_root = tmp_path / "ProjectDB-Search"
     python_dir = bundle_root / "python"
@@ -32,4 +28,3 @@ def test_bundle_root_detected_when_layout_matches(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(runtime_paths.sys, "executable", str(fake_python_exe))
 
     assert runtime_paths._bundle_root() == bundle_root
-    assert runtime_paths.get_poppler_path() == str(bundle_root / "poppler")

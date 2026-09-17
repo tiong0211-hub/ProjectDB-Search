@@ -79,16 +79,16 @@ installed, but no internet / no `pip install`), see:
 pip install -e ".[dev]"
 ```
 
-PDF/OCR fallback also needs two system binaries on PATH (not installed via
-pip): [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) and
-[Poppler](https://poppler.freedesktop.org/) (for `pdf2image`). On Debian/Ubuntu:
+The OCR fallback needs one system binary on PATH (not installed via pip):
+[Tesseract OCR](https://github.com/tesseract-ocr/tesseract). On Debian/Ubuntu:
 
 ```bash
-apt-get install -y tesseract-ocr poppler-utils
+apt-get install -y tesseract-ocr
 ```
 
-Without them, filename/folder-only indexing still works — the fallback
-pass simply can't run.
+Without it, filename/folder-only and PDF-text-layer indexing still work —
+only the OCR fallback can't run. (PDF-page rendering uses `pypdfium2`, a
+pip-installed compiled library — no separate Poppler install needed.)
 
 ## Usage
 

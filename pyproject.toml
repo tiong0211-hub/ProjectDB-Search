@@ -11,7 +11,7 @@ dependencies = [
     "click>=8.1",
     "pdfplumber>=0.11",
     "pytesseract>=0.3",
-    "pdf2image>=1.17",
+    "pypdfium2>=4.0",
     "Pillow>=10.0",
     "Flask>=3.0",
     "anthropic>=0.40",
@@ -31,3 +31,6 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 projectdb_search = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
