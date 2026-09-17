@@ -8,6 +8,8 @@
   filenames/folder names, so it's fast even over a large folder.
 </p>
 
+{% if last_indexed %}<p class="hint">Last indexed: {{ last_indexed }}</p>{% endif %}
+
 {% if error %}
   <p class="error">{{ error }}</p>
 {% endif %}

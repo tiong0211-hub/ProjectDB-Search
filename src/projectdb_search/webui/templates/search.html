@@ -6,6 +6,11 @@
   <p><a href="/index-documents" class="search-button link-button">Index documents</a></p>
 </div>
 {% else %}
+{% if last_indexed %}
+<p class="hint">
+  Last indexed: {{ last_indexed }}{% if indexed_root %} &middot; Folder: {{ indexed_root }}{% endif %}
+</p>
+{% endif %}
 <form method="post" action="/search" class="search-form">
   <input
     type="text" name="query" class="search-input" autocomplete="off" autofocus

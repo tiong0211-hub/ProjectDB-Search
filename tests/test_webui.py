@@ -54,6 +54,31 @@ def test_index_page_renders_empty_search_form(
     assert b"search" in resp.data.lower()
 
 
+def test_index_page_shows_last_indexed_timestamp(
+    corpus_root: Path, built_index: tuple[Path, Path, InvertedIndex], app_config: AppConfig
+):
+    client, _ = _client(corpus_root, built_index, app_config)
+    resp = client.get("/")
+    assert b"Last indexed:" in resp.data
+
+
+def test_index_documents_page_shows_last_indexed_timestamp(
+    corpus_root: Path, built_index: tuple[Path, Path, InvertedIndex], app_config: AppConfig
+):
+    client, _ = _client(corpus_root, built_index, app_config)
+    resp = client.get("/index-documents")
+    assert b"Last indexed:" in resp.data
+
+
+def test_no_last_indexed_line_before_any_index_exists(tmp_path: Path, app_config: AppConfig):
+    app = create_app(tmp_path / "index", tmp_path / "logs", None, app_config)
+    app.testing = True
+    client = app.test_client()
+
+    assert b"Last indexed:" not in client.get("/").data
+    assert b"Last indexed:" not in client.get("/index-documents").data
+
+
 def test_search_page_returns_results_with_justification(
     corpus_root: Path, built_index: tuple[Path, Path, InvertedIndex], app_config: AppConfig
 ):

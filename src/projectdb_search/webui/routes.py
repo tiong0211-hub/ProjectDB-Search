@@ -12,6 +12,7 @@ involved).
 from __future__ import annotations
 
 import threading
+from datetime import datetime
 from pathlib import Path
 
 from flask import Flask, abort, current_app, jsonify, render_template, request, send_file
@@ -44,6 +45,21 @@ _deep_scan_state: dict = {
     "summary": None,
     "error": None,
 }
+
+
+def _format_built_at(built_at: str) -> str | None:
+    """`InvertedIndex.built_at` is stored as an ISO 8601 UTC timestamp (see
+    storage/inverted_index.py) -- convert it to the viewer's local time for
+    display, since "마지막 인덱싱: ...UTC" would just confuse a Korean office
+    user checking how fresh the index is. Returns None (hide the line
+    entirely) for a missing/unparseable value rather than showing garbage.
+    """
+    if not built_at:
+        return None
+    try:
+        return datetime.fromisoformat(built_at).astimezone().strftime("%Y-%m-%d %H:%M")
+    except ValueError:
+        return None
 
 
 def _count_pending_deep_scan(index_dir: Path) -> int:
@@ -93,18 +109,34 @@ def register_routes(app: Flask) -> None:
 
     @app.get("/")
     def index_page():
-        has_index = load_inverted_index(current_app.config["INDEX_DIR"]) is not None
-        return render_template("search.html", query=None, results=None, has_index=has_index)
+        index_dir = current_app.config["INDEX_DIR"]
+        inverted = load_inverted_index(index_dir)
+        corpus_root = current_app.config["CORPUS_ROOT"] or index_store.load_corpus_root(index_dir)
+        return render_template(
+            "search.html",
+            query=None,
+            results=None,
+            has_index=inverted is not None,
+            last_indexed=_format_built_at(inverted.built_at) if inverted else None,
+            indexed_root=str(corpus_root) if corpus_root else None,
+        )
 
     @app.post("/search")
     def do_search():
         index_dir = current_app.config["INDEX_DIR"]
-        if load_inverted_index(index_dir) is None:
+        inverted = load_inverted_index(index_dir)
+        if inverted is None:
             return render_template("search.html", query=None, results=None, has_index=False)
+        last_indexed = _format_built_at(inverted.built_at)
+        corpus_root = current_app.config["CORPUS_ROOT"] or index_store.load_corpus_root(index_dir)
+        indexed_root = str(corpus_root) if corpus_root else None
 
         query_text = request.form.get("query", "").strip()
         if not query_text:
-            return render_template("search.html", query="", results=None, has_index=True)
+            return render_template(
+                "search.html", query="", results=None, has_index=True,
+                last_indexed=last_indexed, indexed_root=indexed_root,
+            )
 
         result = _run_search(query_text)
         return render_template(
@@ -112,6 +144,8 @@ def register_routes(app: Flask) -> None:
             query=query_text,
             results=_build_results_view(result),
             has_index=True,
+            last_indexed=last_indexed,
+            indexed_root=indexed_root,
             ambiguous=result.ambiguous,
             used_llm_rerank=result.used_llm_rerank,
             search_context={
@@ -127,12 +161,14 @@ def register_routes(app: Flask) -> None:
     def index_documents_page():
         index_dir = current_app.config["INDEX_DIR"]
         default_corpus_root = current_app.config["CORPUS_ROOT"] or index_store.load_corpus_root(index_dir)
+        inverted = load_inverted_index(index_dir)
         return render_template(
             "index_documents.html",
             default_corpus_root=default_corpus_root,
             summary=None,
             error=None,
             pending_deep_scan_count=_count_pending_deep_scan(index_dir),
+            last_indexed=_format_built_at(inverted.built_at) if inverted else None,
         )
 
     @app.post("/index-documents")
@@ -146,12 +182,14 @@ def register_routes(app: Flask) -> None:
         corpus_path = Path(corpus_root_input).expanduser() if corpus_root_input else None
 
         if not corpus_path or not corpus_path.is_dir():
+            inverted = load_inverted_index(index_dir)
             return render_template(
                 "index_documents.html",
                 default_corpus_root=corpus_root_input,
                 summary=None,
                 error=f"'{corpus_root_input}' is not a folder that exists on this machine.",
                 pending_deep_scan_count=_count_pending_deep_scan(index_dir),
+                last_indexed=_format_built_at(inverted.built_at) if inverted else None,
             )
 
         # Stage 1 only -- filename/folder parsing. Fast even over a large
@@ -160,12 +198,14 @@ def register_routes(app: Flask) -> None:
         summary = run_pipeline(corpus_path, index_dir, config, force_rebuild=rebuild, log_dir=log_dir)
         current_app.config["CORPUS_ROOT"] = corpus_path.resolve()
 
+        inverted = load_inverted_index(index_dir)
         return render_template(
             "index_documents.html",
             default_corpus_root=str(corpus_path),
             summary=summary,
             error=None,
             pending_deep_scan_count=summary.pending_deep_scan,
+            last_indexed=_format_built_at(inverted.built_at) if inverted else None,
         )
 
     @app.post("/deep-scan")
