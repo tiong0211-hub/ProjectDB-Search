@@ -49,7 +49,11 @@ from projectdb_search.indexer.ocr import get_ocr_backend
 from projectdb_search.indexer.ocr.base import OCRBackend
 from projectdb_search.models import DocumentRecord
 from projectdb_search.storage import index_store
-from projectdb_search.storage.inverted_index import build_inverted_index, save_inverted_index
+from projectdb_search.storage.inverted_index import (
+    build_inverted_index,
+    load_inverted_index,
+    save_inverted_index,
+)
 
 REQUIRED_FIELDS = ("project_name", "doc_type")
 
@@ -78,9 +82,21 @@ def needs_fallback(record: DocumentRecord) -> bool:
 
 
 def _walk_corpus(corpus_root: Path, supported_extensions: set[str]) -> list[Path]:
-    return sorted(
-        p for p in corpus_root.rglob("*") if p.is_file() and p.suffix.lower() in supported_extensions
-    )
+    """Every supported file under the corpus, as (sorted) absolute paths.
+
+    Uses os.walk rather than `Path.rglob("*")` + `p.is_file()`: os.walk is
+    scandir-based and already knows which entries are files, whereas the
+    rglob form pays an extra stat syscall per entry to ask. That extra
+    syscall is nearly free locally but is a network round-trip each on a
+    shared/OneDrive drive, which is exactly where these corpora live.
+    """
+    found: list[Path] = []
+    for dirpath, _dirnames, filenames in os.walk(corpus_root):
+        directory = Path(dirpath)
+        for filename in filenames:
+            if os.path.splitext(filename)[1].lower() in supported_extensions:
+                found.append(directory / filename)
+    return sorted(found)
 
 
 def run_pdf_fallback(
@@ -225,23 +241,51 @@ def run_pipeline(
 
     processed = 0
     skipped = 0
+    # Records written during this run, kept so the index rebuild below
+    # doesn't have to read back from disk what we just wrote.
+    fresh_records: dict[str, DocumentRecord] = {}
     for file_path in files:
-        if not force_rebuild and not index_store.has_changed(corpus_root, file_path, manifest):
+        relative = file_path.relative_to(corpus_root)
+        relative_str = str(relative)
+        stat_result = file_path.stat()  # the loop's one stat per file
+
+        if not force_rebuild and not index_store.has_changed(file_path, manifest, relative_str, stat_result):
             skipped += 1
             continue
 
-        meta = parser.parse(corpus_root, file_path)
-        record = DocumentRecord.from_partial(corpus_root, file_path, meta, source="filename")
+        meta = parser.parse(corpus_root, file_path, relative=relative)
+        record = DocumentRecord.from_partial(
+            corpus_root, file_path, meta, source="filename", relative_path=relative_str
+        )
         if needs_fallback(record):
             record.extraction_status = "pending_deep_scan"
 
         index_store.write_record(index_dir, record)
-        index_store.update_manifest_entry(manifest, corpus_root, file_path, record.doc_id)
+        index_store.update_manifest_entry(manifest, relative_str, record.doc_id, stat_result)
+        fresh_records[record.doc_id] = record
         processed += 1
+
+    existing = load_inverted_index(index_dir)
+    if processed == 0 and existing is not None and existing.documents:
+        # Nothing changed on disk, so the index on disk is already correct.
+        # Re-reading every record and rewriting the index here would be
+        # pure waste -- and it's the common case, since "re-run indexing to
+        # pick up new files" usually finds nothing new.
+        index_store.save_manifest(index_dir, manifest)
+        return IndexRunSummary(
+            total_files=len(files),
+            processed=0,
+            skipped_unchanged=skipped,
+            corpus_root_changed=corpus_root_changed,
+            pending_deep_scan=sum(
+                1 for d in existing.documents.values() if d.get("extraction_status") == "pending_deep_scan"
+            ),
+        )
 
     index_store.save_manifest(index_dir, manifest)
 
-    all_records = index_store.load_all_records(index_dir)
+    all_records = index_store.load_all_records(index_dir, skip_doc_ids=set(fresh_records))
+    all_records.extend(fresh_records.values())
     inverted = build_inverted_index(all_records)
     save_inverted_index(index_dir, inverted)
 

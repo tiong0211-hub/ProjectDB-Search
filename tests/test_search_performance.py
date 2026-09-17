@@ -6,6 +6,7 @@ individually-opened files does not scale to at all.
 
 from __future__ import annotations
 
+import shutil
 import time
 from pathlib import Path
 
@@ -77,3 +78,35 @@ def test_search_stays_fast_and_scores_only_a_small_candidate_set(app_config: App
     # milliseconds. The property being tested is "doesn't scale with corpus
     # size", not a tight latency SLA.
     assert elapsed < 0.5, f"search() took {elapsed:.3f}s for a {CORPUS_SIZE}-document corpus"
+
+
+def test_search_does_not_read_a_record_file_per_candidate(app_config: AppConfig, tmp_path: Path):
+    """The wide-query path: a query matching a common project name pulls in
+    a large fraction of the corpus as candidates. Scoring those used to
+    open one records/<doc_id>.json per candidate, which is what made a
+    common-word search take most of a second. Candidates are now scored
+    from the index's own snapshot, so deleting the record files entirely
+    must not change the result.
+    """
+    from projectdb_search.indexer.filename_parser import FilenameParser
+    from projectdb_search.storage.index_store import records_dir
+    from projectdb_search.storage.inverted_index import load_inverted_index
+
+    index_dir = tmp_path / "large_index"
+    _build_large_index(index_dir)
+    parser = FilenameParser(app_config)
+    inverted = load_inverted_index(index_dir)
+    assert inverted is not None
+
+    query = parse_query("Riverside Plant", parser)
+    with_records = search(query, index_dir, inverted, app_config.ranking, NoOpBackend(), top_n=3)
+    assert with_records.candidate_count > CORPUS_SIZE / 10  # genuinely a wide query
+
+    shutil.rmtree(records_dir(index_dir))
+
+    start = time.perf_counter()
+    without_records = search(query, index_dir, inverted, app_config.ranking, NoOpBackend(), top_n=3)
+    elapsed = time.perf_counter() - start
+
+    assert [m.record.doc_id for m in without_records.top] == [m.record.doc_id for m in with_records.top]
+    assert elapsed < 0.5, f"wide-query search took {elapsed:.3f}s for {without_records.candidate_count} candidates"

@@ -12,6 +12,7 @@ the whole index.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -52,31 +53,41 @@ def save_manifest(index_dir: Path, manifest: dict[str, ManifestEntry]) -> None:
     index_dir.mkdir(parents=True, exist_ok=True)
     payload = {"entries": {rel_path: vars(entry) for rel_path, entry in manifest.items()}}
     with open(manifest_path(index_dir), "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2)
+        # No indent: nothing reads these files by eye, and at tens of
+        # thousands of documents the pretty-printing costs real time on
+        # every write and every read, plus ~40% more bytes on disk.
+        json.dump(payload, f, separators=(",", ":"))
 
 
-def has_changed(corpus_root: Path, file_path: Path, manifest: dict[str, ManifestEntry]) -> bool:
-    relative = str(file_path.relative_to(corpus_root))
+def has_changed(
+    file_path: Path, manifest: dict[str, ManifestEntry], relative: str, stat_result: os.stat_result
+) -> bool:
+    """Whether a file differs from what the manifest recorded for it.
+
+    Takes the caller's already-computed relative path and stat result:
+    resolving `file_path.relative_to(corpus_root)` and calling `.stat()`
+    again here would double the per-file syscalls during a walk, which is
+    the dominant cost when the corpus sits on a network/OneDrive drive.
+    """
     entry = manifest.get(relative)
     if entry is None:
         return True
-    stat = file_path.stat()
-    return entry.mtime != stat.st_mtime or entry.size != stat.st_size
+    return entry.mtime != stat_result.st_mtime or entry.size != stat_result.st_size
 
 
 def update_manifest_entry(
-    manifest: dict[str, ManifestEntry], corpus_root: Path, file_path: Path, doc_id: str
+    manifest: dict[str, ManifestEntry], relative: str, doc_id: str, stat_result: os.stat_result
 ) -> None:
-    relative = str(file_path.relative_to(corpus_root))
-    stat = file_path.stat()
-    manifest[relative] = ManifestEntry(mtime=stat.st_mtime, size=stat.st_size, doc_id=doc_id)
+    manifest[relative] = ManifestEntry(
+        mtime=stat_result.st_mtime, size=stat_result.st_size, doc_id=doc_id
+    )
 
 
 def write_record(index_dir: Path, record: DocumentRecord) -> None:
     rdir = records_dir(index_dir)
     rdir.mkdir(parents=True, exist_ok=True)
     with open(rdir / f"{record.doc_id}.json", "w", encoding="utf-8") as f:
-        json.dump(record.to_dict(), f, indent=2)
+        json.dump(record.to_dict(), f, separators=(",", ":"))
 
 
 def load_record(index_dir: Path, doc_id: str) -> DocumentRecord:
@@ -91,6 +102,8 @@ def save_corpus_root(index_dir: Path, corpus_root: Path) -> None:
     """
     index_dir.mkdir(parents=True, exist_ok=True)
     with open(index_dir / META_FILENAME, "w", encoding="utf-8") as f:
+        # This one stays indented -- it's two lines, and being able to read
+        # "which folder is this index for?" by eye is genuinely useful.
         json.dump({"corpus_root": str(corpus_root)}, f, indent=2)
 
 
@@ -115,12 +128,21 @@ def clear_index(index_dir: Path) -> None:
     (index_dir / INVERTED_INDEX_FILENAME).unlink(missing_ok=True)
 
 
-def load_all_records(index_dir: Path) -> list[DocumentRecord]:
+def load_all_records(index_dir: Path, skip_doc_ids: set[str] | None = None) -> list[DocumentRecord]:
+    """Every record on disk, optionally skipping doc_ids the caller already
+    holds in memory.
+
+    `skip_doc_ids` is what keeps a full re-index from reading back all the
+    record files it just finished writing -- at tens of thousands of
+    documents that re-read is hundreds of milliseconds of pure waste.
+    """
     rdir = records_dir(index_dir)
     if not rdir.exists():
         return []
     records = []
     for path in rdir.glob("*.json"):
+        if skip_doc_ids and path.stem in skip_doc_ids:
+            continue
         with open(path, encoding="utf-8") as f:
             records.append(DocumentRecord.from_dict(json.load(f)))
     return records

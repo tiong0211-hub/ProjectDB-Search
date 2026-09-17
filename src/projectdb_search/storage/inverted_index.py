@@ -24,11 +24,16 @@ from projectdb_search.models import DocumentRecord
 
 INVERTED_INDEX_FILENAME = "inverted_index.json"
 
-INDEXED_FIELDS = ("project_name", "doc_type", "department", "equipment_tag")
+# `year` is indexed like the string fields even though it's an int: a
+# year-only query ("2021 도면") otherwise matches no bucket at all, and
+# search falls back to scoring every document in the corpus to find the
+# ones whose year matches -- the slowest possible path for a perfectly
+# ordinary query.
+INDEXED_FIELDS = ("project_name", "doc_type", "department", "equipment_tag", "year")
 
 
-def normalize(value: str) -> str:
-    return value.strip().lower()
+def normalize(value: object) -> str:
+    return str(value).strip().lower()
 
 
 def _levenshtein_at_most_one(a: str, b: str) -> bool:
@@ -83,6 +88,14 @@ class InvertedIndex:
     field_index: dict[str, dict[str, list[str]]] = field(default_factory=dict)
     keyword_index: dict[str, list[str]] = field(default_factory=dict)
     built_at: str = ""
+    # doc_id -> that document's record, as a plain dict. A read-optimized
+    # snapshot of records/*.json (which stays the durable per-document
+    # store): scoring a query used to open and parse one record file per
+    # candidate, so a query matching a common project name meant tens of
+    # thousands of file reads. Search reads this one already-loaded map
+    # instead. Empty for indexes built before this field existed --
+    # ranker.py falls back to reading the record file in that case.
+    documents: dict[str, dict] = field(default_factory=dict)
 
     def field_matches(self, field_name: str, value: str) -> list[str]:
         return self.field_index.get(field_name, {}).get(normalize(value), [])
@@ -142,6 +155,7 @@ def build_inverted_index(records: list[DocumentRecord]) -> InvertedIndex:
         },
         keyword_index={keyword: sorted(doc_ids) for keyword, doc_ids in keyword_sets.items()},
         built_at=datetime.now(timezone.utc).isoformat(),
+        documents={record.doc_id: record.to_dict() for record in records},
     )
 
 
@@ -151,9 +165,13 @@ def save_inverted_index(index_dir: Path, inverted: InvertedIndex) -> None:
         "built_at": inverted.built_at,
         "field_index": inverted.field_index,
         "keyword_index": inverted.keyword_index,
+        "documents": inverted.documents,
     }
     with open(index_dir / INVERTED_INDEX_FILENAME, "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2)
+        # No indent -- see save_manifest. This is the single largest file
+        # the app writes and the one search re-reads, so its size matters
+        # twice over.
+        json.dump(payload, f, separators=(",", ":"))
 
 
 def load_inverted_index(index_dir: Path) -> InvertedIndex | None:
@@ -166,4 +184,36 @@ def load_inverted_index(index_dir: Path) -> InvertedIndex | None:
         field_index=raw.get("field_index", {}),
         keyword_index=raw.get("keyword_index", {}),
         built_at=raw.get("built_at", ""),
+        documents=raw.get("documents", {}),
     )
+
+
+_cache: dict[Path, tuple[float, int, InvertedIndex]] = {}
+
+
+def load_inverted_index_cached(index_dir: Path) -> InvertedIndex | None:
+    """`load_inverted_index`, but reusing the previously parsed index while
+    the file on disk is unchanged.
+
+    The web UI parses the index on every request (twice, on a search), and
+    at tens of thousands of documents that parse is tens of milliseconds of
+    pure overhead per query. Keyed on the file's (mtime, size) so an index
+    rebuilt by this process -- or by a `projectdb-search index` run in
+    another terminal -- is picked up on the next call rather than served
+    stale.
+    """
+    path = index_dir / INVERTED_INDEX_FILENAME
+    try:
+        stat = path.stat()
+    except OSError:
+        _cache.pop(index_dir, None)
+        return None
+
+    cached = _cache.get(index_dir)
+    if cached is not None and cached[0] == stat.st_mtime and cached[1] == stat.st_size:
+        return cached[2]
+
+    inverted = load_inverted_index(index_dir)
+    if inverted is not None:
+        _cache[index_dir] = (stat.st_mtime, stat.st_size, inverted)
+    return inverted

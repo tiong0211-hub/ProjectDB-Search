@@ -262,6 +262,39 @@ def test_reindexing_same_corpus_root_accumulates_incrementally(
     assert second.processed == 0
 
 
+def test_reindex_with_no_changes_leaves_the_index_file_untouched(
+    corpus_root: Path, tmp_path: Path, app_config: AppConfig
+):
+    """A re-run that finds nothing changed must not rewrite the index --
+    rebuilding it from every record on disk is the expensive part, and it
+    would produce byte-for-byte the same result.
+    """
+    index_dir = tmp_path / "index"
+    run_pipeline(corpus_root, index_dir, app_config)
+    index_file = index_dir / "inverted_index.json"
+    before = index_file.stat().st_mtime_ns
+
+    summary = run_pipeline(corpus_root, index_dir, app_config)
+
+    assert summary.processed == 0
+    assert index_file.stat().st_mtime_ns == before
+    # The summary still reports the real pending count, read from the
+    # existing index rather than recomputed from disk.
+    assert summary.pending_deep_scan > 0
+
+
+def test_search_still_works_after_a_no_op_reindex(
+    corpus_root: Path, tmp_path: Path, app_config: AppConfig
+):
+    index_dir = tmp_path / "index"
+    run_pipeline(corpus_root, index_dir, app_config)
+    run_pipeline(corpus_root, index_dir, app_config)
+
+    inverted = load_inverted_index(index_dir)
+    assert inverted is not None
+    assert inverted.documents  # snapshot survived the skipped rebuild
+
+
 def test_reindexing_a_different_corpus_root_clears_the_old_index(
     corpus_root: Path, tmp_path: Path, app_config: AppConfig
 ):

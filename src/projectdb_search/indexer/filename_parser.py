@@ -46,9 +46,15 @@ class FilenameParser:
             for label, pattern_list in patterns.items()
         }
 
-    def parse(self, corpus_root: Path, file_path: Path) -> PartialMetadata:
-        """Parse a file's name + its parent folder names (index-time entry point)."""
-        relative_parts = file_path.relative_to(corpus_root).parts
+    def parse(self, corpus_root: Path, file_path: Path, relative: Path | None = None) -> PartialMetadata:
+        """Parse a file's name + its parent folder names (index-time entry point).
+
+        `relative` lets the indexing loop hand in the already-computed
+        `file_path.relative_to(corpus_root)`: pathlib recomputes it from
+        scratch each call, and the loop needs the same value for the record
+        and the manifest anyway.
+        """
+        relative_parts = (relative or file_path.relative_to(corpus_root)).parts
         text = " / ".join([file_path.stem, *relative_parts[:-1]])
         return self.parse_freetext(text)
 

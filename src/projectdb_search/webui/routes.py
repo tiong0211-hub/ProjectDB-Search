@@ -26,7 +26,7 @@ from projectdb_search.search.query_parser import parse_query
 from projectdb_search.search.ranker import SearchResult, build_justification
 from projectdb_search.search.ranker import search as run_search
 from projectdb_search.storage import index_store
-from projectdb_search.storage.inverted_index import load_inverted_index
+from projectdb_search.storage.inverted_index import load_inverted_index_cached
 from projectdb_search.webui.reveal import reveal_in_file_manager
 
 # Deep-scan (PDF-text/OCR fallback) runs in a background thread so the
@@ -63,8 +63,15 @@ def _format_built_at(built_at: str) -> str | None:
 
 
 def _count_pending_deep_scan(index_dir: Path) -> int:
-    if load_inverted_index(index_dir) is None:
+    inverted = load_inverted_index_cached(index_dir)
+    if inverted is None:
         return 0
+    if inverted.documents:
+        return sum(
+            1 for d in inverted.documents.values() if d.get("extraction_status") == "pending_deep_scan"
+        )
+    # Index predates the documents snapshot -- fall back to reading the
+    # record files (slower, but correct until the next re-index).
     return sum(1 for r in index_store.load_all_records(index_dir) if r.extraction_status == "pending_deep_scan")
 
 
@@ -110,7 +117,7 @@ def register_routes(app: Flask) -> None:
     @app.get("/")
     def index_page():
         index_dir = current_app.config["INDEX_DIR"]
-        inverted = load_inverted_index(index_dir)
+        inverted = load_inverted_index_cached(index_dir)
         corpus_root = current_app.config["CORPUS_ROOT"] or index_store.load_corpus_root(index_dir)
         return render_template(
             "search.html",
@@ -124,7 +131,7 @@ def register_routes(app: Flask) -> None:
     @app.post("/search")
     def do_search():
         index_dir = current_app.config["INDEX_DIR"]
-        inverted = load_inverted_index(index_dir)
+        inverted = load_inverted_index_cached(index_dir)
         if inverted is None:
             return render_template("search.html", query=None, results=None, has_index=False)
         last_indexed = _format_built_at(inverted.built_at)
@@ -161,7 +168,7 @@ def register_routes(app: Flask) -> None:
     def index_documents_page():
         index_dir = current_app.config["INDEX_DIR"]
         default_corpus_root = current_app.config["CORPUS_ROOT"] or index_store.load_corpus_root(index_dir)
-        inverted = load_inverted_index(index_dir)
+        inverted = load_inverted_index_cached(index_dir)
         return render_template(
             "index_documents.html",
             default_corpus_root=default_corpus_root,
@@ -182,7 +189,7 @@ def register_routes(app: Flask) -> None:
         corpus_path = Path(corpus_root_input).expanduser() if corpus_root_input else None
 
         if not corpus_path or not corpus_path.is_dir():
-            inverted = load_inverted_index(index_dir)
+            inverted = load_inverted_index_cached(index_dir)
             return render_template(
                 "index_documents.html",
                 default_corpus_root=corpus_root_input,
@@ -198,7 +205,7 @@ def register_routes(app: Flask) -> None:
         summary = run_pipeline(corpus_path, index_dir, config, force_rebuild=rebuild, log_dir=log_dir)
         current_app.config["CORPUS_ROOT"] = corpus_path.resolve()
 
-        inverted = load_inverted_index(index_dir)
+        inverted = load_inverted_index_cached(index_dir)
         return render_template(
             "index_documents.html",
             default_corpus_root=str(corpus_path),
@@ -318,7 +325,7 @@ def register_routes(app: Flask) -> None:
 def _run_search(query_text: str) -> SearchResult:
     index_dir = current_app.config["INDEX_DIR"]
     config = current_app.config["APP_CONFIG"]
-    inverted = load_inverted_index(index_dir)
+    inverted = load_inverted_index_cached(index_dir)
     if inverted is None:
         abort(500, f"No index found at {index_dir}. Run `projectdb-search index` first.")
 

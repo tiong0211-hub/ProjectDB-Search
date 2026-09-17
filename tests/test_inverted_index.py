@@ -30,6 +30,25 @@ def test_keyword_matches_loose_tolerates_typos():
     assert inverted.keyword_matches_loose("datasheat") == ["d1"]
 
 
+def test_year_is_indexed_so_year_only_queries_do_not_scan_the_whole_corpus():
+    records = [_record(f"d{i}", year=2020 + (i % 3)) for i in range(9)]
+    inverted = build_inverted_index(records)
+
+    # Without year in the index a year-only query matches no bucket, and
+    # search falls back to scoring every document in the corpus.
+    assert inverted.field_matches("year", "2021") == ["d1", "d4", "d7"]
+
+
+def test_documents_snapshot_carries_each_record_for_search():
+    records = [_record("d1", project_name="Riverside Plant", keywords=["pump"])]
+    inverted = build_inverted_index(records)
+
+    # Scoring reads this instead of opening records/<doc_id>.json per
+    # candidate -- see ranker._candidate_record.
+    assert inverted.documents["d1"]["project_name"] == "Riverside Plant"
+    assert inverted.documents["d1"]["keywords"] == ["pump"]
+
+
 def test_many_documents_sharing_a_field_value_and_keyword_are_all_indexed():
     # Regression test for a real O(n^2) bug: build_inverted_index used to
     # dedupe each bucket with `if doc_id not in a_list`, which is O(bucket

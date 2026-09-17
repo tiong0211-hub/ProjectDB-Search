@@ -39,19 +39,22 @@ def test_load_all_records_returns_every_written_record(tmp_path: Path):
 
 
 def test_manifest_detects_unchanged_vs_changed_files(tmp_path: Path):
+    # has_changed/update_manifest_entry take the relative path and stat
+    # result the indexing loop already computed, rather than recomputing
+    # them per call -- see index_store.has_changed's docstring.
     corpus_root = tmp_path / "corpus"
     corpus_root.mkdir()
     file_path = corpus_root / "doc.pdf"
     file_path.write_text("v1")
 
     manifest = {}
-    assert index_store.has_changed(corpus_root, file_path, manifest) is True
+    assert index_store.has_changed(file_path, manifest, "doc.pdf", file_path.stat()) is True
 
-    index_store.update_manifest_entry(manifest, corpus_root, file_path, "doc_id_1")
-    assert index_store.has_changed(corpus_root, file_path, manifest) is False
+    index_store.update_manifest_entry(manifest, "doc.pdf", "doc_id_1", file_path.stat())
+    assert index_store.has_changed(file_path, manifest, "doc.pdf", file_path.stat()) is False
 
     file_path.write_text("v2 - different size")
-    assert index_store.has_changed(corpus_root, file_path, manifest) is True
+    assert index_store.has_changed(file_path, manifest, "doc.pdf", file_path.stat()) is True
 
 
 def test_manifest_saves_and_loads(tmp_path: Path):
@@ -62,7 +65,7 @@ def test_manifest_saves_and_loads(tmp_path: Path):
     file_path.write_text("v1")
 
     manifest = {}
-    index_store.update_manifest_entry(manifest, corpus_root, file_path, "doc_id_1")
+    index_store.update_manifest_entry(manifest, "doc.pdf", "doc_id_1", file_path.stat())
     index_store.save_manifest(index_dir, manifest)
 
     reloaded = index_store.load_manifest(index_dir)

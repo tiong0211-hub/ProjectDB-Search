@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -54,9 +54,16 @@ class DocumentRecord:
 
     @classmethod
     def from_partial(
-        cls, corpus_root: Path, file_path: Path, meta: PartialMetadata, source: str = "filename"
+        cls,
+        corpus_root: Path,
+        file_path: Path,
+        meta: PartialMetadata,
+        source: str = "filename",
+        relative_path: str | None = None,
     ) -> "DocumentRecord":
-        relative = str(file_path.relative_to(corpus_root))
+        # `relative_path` lets the indexing loop pass in the relative path
+        # it already computed, instead of pathlib recomputing it per record.
+        relative = relative_path if relative_path is not None else str(file_path.relative_to(corpus_root))
         return cls(
             doc_id=make_doc_id(relative),
             file_path=relative,
@@ -92,7 +99,15 @@ class DocumentRecord:
         self.source_of_metadata = f"{self.source_of_metadata}+{source}"
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        # Deliberately NOT dataclasses.asdict(): that deep-copies
+        # recursively (21 internal calls per record here), which showed up
+        # as ~20% of total indexing time at 20k documents. Every field on
+        # this dataclass is a scalar or a flat list of strings, so a shallow
+        # copy is equivalent -- except that `keywords` would be shared with
+        # the record, so copy that one list explicitly.
+        data = dict(self.__dict__)
+        data["keywords"] = list(self.keywords)
+        return data
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "DocumentRecord":
