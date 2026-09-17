@@ -54,9 +54,24 @@ opened for text/OCR extraction. Office formats (Word/Excel/PowerPoint) are
 intentionally never parsed — many real copies of those are internal
 security-restricted files — and aren't even walked by the indexer.
 
-Not yet implemented: exe packaging for offline, no-Python-installed
-distribution (deliberately out of scope for now — it needs a Windows build
-environment this sandbox doesn't have).
+## Deploying to a network with no internet access
+
+For the internal, air-gapped network scenario (Claude Enterprise already
+installed, but no internet / no `pip install`), see:
+- **[`packaging/embeddable/BUILD.md`](packaging/embeddable/BUILD.md)** —
+  how to build a self-contained "unzip and double-click `run.bat`" bundle
+  (embeddable Python + vendored dependencies + Tesseract + Poppler, no
+  install step, no admin rights needed on the target machine). This is the
+  chosen alternative to a PyInstaller `.exe` build — it doesn't need a
+  Windows machine to assemble, and avoids the self-extracting-exe pattern
+  that commonly trips antivirus.
+- **[`docs/claude-enterprise-setup.md`](docs/claude-enterprise-setup.md)** —
+  connecting the optional LLM re-rank step to an internal Claude Enterprise
+  gateway instead of the public Anthropic API.
+- **[`docs/USER_GUIDE.ko.md`](docs/USER_GUIDE.ko.md)** — end-user
+  instructions (Korean) for non-technical colleagues using the packaged
+  bundle: first run, indexing a folder, searching, feedback, the review
+  queue.
 
 ## Install
 
