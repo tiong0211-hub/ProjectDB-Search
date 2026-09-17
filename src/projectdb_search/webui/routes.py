@@ -17,6 +17,7 @@ from flask import Flask, abort, current_app, jsonify, render_template, request, 
 
 from projectdb_search.indexer import logging_utils
 from projectdb_search.indexer.filename_parser import FilenameParser
+from projectdb_search.indexer.pipeline import run_pipeline
 from projectdb_search.search import feedback as feedback_module
 from projectdb_search.search.llm import get_llm_backend
 from projectdb_search.search.query_parser import parse_query
@@ -33,19 +34,25 @@ def register_routes(app: Flask) -> None:
 
     @app.get("/")
     def index_page():
-        return render_template("search.html", query=None, results=None)
+        has_index = load_inverted_index(current_app.config["INDEX_DIR"]) is not None
+        return render_template("search.html", query=None, results=None, has_index=has_index)
 
     @app.post("/search")
     def do_search():
+        index_dir = current_app.config["INDEX_DIR"]
+        if load_inverted_index(index_dir) is None:
+            return render_template("search.html", query=None, results=None, has_index=False)
+
         query_text = request.form.get("query", "").strip()
         if not query_text:
-            return render_template("search.html", query="", results=None)
+            return render_template("search.html", query="", results=None, has_index=True)
 
         result = _run_search(query_text)
         return render_template(
             "search.html",
             query=query_text,
             results=_build_results_view(result),
+            has_index=True,
             ambiguous=result.ambiguous,
             used_llm_rerank=result.used_llm_rerank,
             search_context={
@@ -55,6 +62,39 @@ def register_routes(app: Flask) -> None:
                 "ambiguous": result.ambiguous,
                 "used_llm_rerank": result.used_llm_rerank,
             },
+        )
+
+    @app.get("/index-documents")
+    def index_documents_page():
+        index_dir = current_app.config["INDEX_DIR"]
+        default_corpus_root = current_app.config["CORPUS_ROOT"] or index_store.load_corpus_root(index_dir)
+        return render_template(
+            "index_documents.html", default_corpus_root=default_corpus_root, summary=None, error=None
+        )
+
+    @app.post("/index-documents")
+    def do_index_documents():
+        index_dir = current_app.config["INDEX_DIR"]
+        log_dir = current_app.config["LOG_DIR"]
+        config = current_app.config["APP_CONFIG"]
+
+        corpus_root_input = request.form.get("corpus_root", "").strip()
+        rebuild = request.form.get("rebuild") == "on"
+        corpus_path = Path(corpus_root_input).expanduser() if corpus_root_input else None
+
+        if not corpus_path or not corpus_path.is_dir():
+            return render_template(
+                "index_documents.html",
+                default_corpus_root=corpus_root_input,
+                summary=None,
+                error=f"'{corpus_root_input}' is not a folder that exists on this machine.",
+            )
+
+        summary = run_pipeline(corpus_path, index_dir, config, force_rebuild=rebuild, log_dir=log_dir)
+        current_app.config["CORPUS_ROOT"] = corpus_path.resolve()
+
+        return render_template(
+            "index_documents.html", default_corpus_root=str(corpus_path), summary=summary, error=None
         )
 
     @app.post("/feedback")

@@ -115,3 +115,65 @@ def test_review_queue_page_lists_low_confidence_entries(
     resp = client.get("/review-queue")
     assert resp.status_code == 200
     assert b"blurry_scan_noname.pdf" in resp.data
+
+
+def test_index_page_shows_no_index_notice_when_index_dir_is_empty(tmp_path: Path, app_config: AppConfig):
+    app = create_app(tmp_path / "index", tmp_path / "logs", None, app_config)
+    app.testing = True
+    client = app.test_client()
+
+    resp = client.get("/")
+
+    assert resp.status_code == 200
+    assert b"No index yet" in resp.data
+    assert b'href="/index-documents"' in resp.data
+
+
+def test_search_before_indexing_shows_no_index_notice_instead_of_erroring(tmp_path: Path, app_config: AppConfig):
+    app = create_app(tmp_path / "index", tmp_path / "logs", None, app_config)
+    app.testing = True
+    client = app.test_client()
+
+    resp = client.post("/search", data={"query": "anything"})
+
+    assert resp.status_code == 200
+    assert b"No index yet" in resp.data
+
+
+def test_index_documents_page_renders_form(tmp_path: Path, app_config: AppConfig):
+    app = create_app(tmp_path / "index", tmp_path / "logs", None, app_config)
+    app.testing = True
+    client = app.test_client()
+
+    resp = client.get("/index-documents")
+
+    assert resp.status_code == 200
+    assert b'name="corpus_root"' in resp.data
+
+
+def test_index_documents_post_builds_index_and_updates_corpus_root(corpus_root: Path, tmp_path: Path, app_config: AppConfig):
+    index_dir = tmp_path / "index"
+    app = create_app(index_dir, tmp_path / "logs", None, app_config)
+    app.testing = True
+    client = app.test_client()
+
+    resp = client.post("/index-documents", data={"corpus_root": str(corpus_root)})
+
+    assert resp.status_code == 200
+    assert b"Done." in resp.data
+    assert app.config["CORPUS_ROOT"] == corpus_root.resolve()
+
+    # The index now exists, so the homepage should show the search form, not the notice.
+    home = client.get("/")
+    assert b"No index yet" not in home.data
+
+
+def test_index_documents_post_rejects_nonexistent_path(tmp_path: Path, app_config: AppConfig):
+    app = create_app(tmp_path / "index", tmp_path / "logs", None, app_config)
+    app.testing = True
+    client = app.test_client()
+
+    resp = client.post("/index-documents", data={"corpus_root": str(tmp_path / "does-not-exist")})
+
+    assert resp.status_code == 200
+    assert b"is not a folder that exists" in resp.data

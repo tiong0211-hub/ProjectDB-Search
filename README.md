@@ -29,8 +29,10 @@ Implemented so far:
   applies the change by hand
 - A local web UI (`projectdb-search serve`) — the exact same search engine
   as the CLI, with a browser front-end: search box, Top-3 with
-  justification, "Open file", correct/incorrect feedback buttons, and a
-  review-queue page
+  justification, "Open file", correct/incorrect feedback buttons, an
+  "Index documents" page (pick a folder, build/rebuild the index — no CLI
+  needed at all), and a review-queue page. `serve` works even with no
+  index yet, for a non-technical user's very first run
 - An optional, pluggable LLM re-rank step for ambiguous queries only
   (`AnthropicAPIBackend`) — disabled by default (`NoOpBackend`, zero network
   calls) unless an API key is configured; `base_url` is configurable so the
@@ -77,7 +79,9 @@ projectdb-search search "isometric drawing for HX-203"
 projectdb-search search "P&ID unit 3 riverside plant 2021" --json
 projectdb-search search "isometric drawing for HX-203" --interactive  # prompts for correct/incorrect feedback
 
-# Local web UI (browser front-end over the same search engine)
+# Local web UI (browser front-end over the same search engine).
+# No index needed beforehand -- if one doesn't exist, the UI's own
+# "Index documents" page lets you point at a folder and build it.
 projectdb-search serve
 
 # Documents flagged for manual review (low-confidence OCR, unreadable files)

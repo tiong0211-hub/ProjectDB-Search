@@ -1,5 +1,11 @@
 {% extends "base.html" %}
 {% block content %}
+{% if not has_index %}
+<div class="no-index-notice">
+  <p><strong>No index yet.</strong> Point the tool at your document folder to get started.</p>
+  <p><a href="/index-documents" class="search-button link-button">Index documents</a></p>
+</div>
+{% else %}
 <form method="post" action="/search" class="search-form">
   <input
     type="text" name="query" class="search-input" autocomplete="off" autofocus
@@ -11,5 +17,6 @@
 
 {% if results is not none %}
   {% include "results.html" %}
+{% endif %}
 {% endif %}
 {% endblock %}

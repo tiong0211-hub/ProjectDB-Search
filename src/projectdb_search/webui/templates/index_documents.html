@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Index documents</h2>
+<p class="hint">
+  Point this at the folder containing your PDFs, scans, and photos. Indexing
+  only reads files there — it never modifies or moves your documents. Re-run
+  it any time to pick up new or changed files.
+</p>
+
+{% if error %}
+  <p class="error">{{ error }}</p>
+{% endif %}
+
+<form method="post" action="/index-documents" class="index-form">
+  <label for="corpus_root">Document folder (local path)</label>
+  <input
+    type="text" id="corpus_root" name="corpus_root" autocomplete="off"
+    value="{{ default_corpus_root or '' }}"
+    placeholder="e.g. C:\Shared\ProjectDocs or /mnt/shared/docs"
+  >
+  <label class="checkbox-label">
+    <input type="checkbox" name="rebuild"> Force full re-index (ignore what's already indexed)
+  </label>
+  <button type="submit" class="search-button">Build index</button>
+</form>
+
+{% if summary %}
+<div class="index-summary">
+  <p>
+    <strong>Done.</strong> Indexed {{ summary.processed }} file(s), skipped
+    {{ summary.skipped_unchanged }} unchanged, {{ summary.total_files }} total files found.
+  </p>
+  <p><a href="/">Go search &rarr;</a></p>
+</div>
+{% endif %}
+{% endblock %}

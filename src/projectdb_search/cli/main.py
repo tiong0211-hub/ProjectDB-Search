@@ -143,14 +143,19 @@ def review_queue_cmd(index_dir: Path, log_dir: Path | None) -> None:
 @click.option("--port", default=8765, show_default=True)
 @click.option("--no-browser", is_flag=True, help="Don't automatically open a browser tab.")
 def serve_cmd(index_dir: Path, log_dir: Path | None, corpus_root: Path | None, port: int, no_browser: bool) -> None:
-    """Start the local web UI (same search engine as `search`, browser front-end)."""
-    if load_inverted_index(index_dir) is None:
-        raise click.ClickException(f"No index found at {index_dir}. Run `projectdb-search index` first.")
+    """Start the local web UI (same search engine as `search`, browser front-end).
 
+    No index needs to exist yet -- if one doesn't, the web UI's own
+    "Index documents" page lets a non-technical user point it at a folder
+    and build it, with no CLI use required at all.
+    """
     config = load_config()
     log_dir = log_dir or (index_dir.parent / "logs")
     resolved_corpus_root = corpus_root or index_store.load_corpus_root(index_dir)
-    if resolved_corpus_root is None:
+
+    if load_inverted_index(index_dir) is None:
+        click.echo("No index found yet -- use the web UI's \"Index documents\" page to build one.", err=True)
+    elif resolved_corpus_root is None:
         click.echo(
             "Warning: corpus root is unknown (index was built before this feature, or --corpus-root wasn't "
             "given). Search will work, but 'Open file' links won't.",
