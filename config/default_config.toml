@@ -1,0 +1,55 @@
+# ProjectDB-Search default configuration.
+# Regex patterns are matched case-insensitively against filename + parent
+# folder names (at index time) and against the raw query text (at search
+# time) via the same rule set — see filename_parser.py / query_parser.py.
+
+[doc_type_patterns]
+"P&ID" = ["p&id", "p and id", "\\bpid\\b"]
+"isometric" = ["iso(metric)?"]
+"memo" = ["memo", "technical note", "\\btn\\b"]
+"photo" = ["photo", "\\bimg\\b", "\\bpic\\b"]
+"drawing" = ["drawing", "\\bdwg\\b"]
+"datasheet" = ["datasheet", "data sheet", "\\bds\\b"]
+
+[project_name_patterns]
+# Known project names, matched as literal (case-insensitive) substrings.
+# Extend this list as real project names become known.
+"Riverside Plant" = ["riverside\\s*plant", "riverside"]
+"Compressor Station" = ["compressor\\s*station"]
+
+[department_patterns]
+"Electrical" = ["electrical", "\\belec\\b"]
+"Mechanical" = ["mechanical", "\\bmech\\b"]
+"Civil" = ["civil"]
+"Process" = ["process"]
+
+[equipment_tag_pattern]
+# e.g. P-101A, HX-203, TK-14
+regex = "\\b[A-Z]{1,4}-\\d{2,4}[A-Z]?\\b"
+
+[year_pattern]
+regex = "\\b(19|20)\\d{2}\\b"
+
+[ranking_weights]
+equipment_tag = 40
+project_name = 25
+doc_type = 15
+department = 10
+year = 5
+keyword = 3
+
+[ranking]
+# A candidate's own top score below this is considered weak.
+ambiguous_absolute_threshold = 20
+# If the top two candidates' scores differ by less than this, it's a close race.
+ambiguous_margin = 5
+# Cap on how many keyword hits count toward the score (diminishing returns).
+max_keyword_hits = 5
+
+[llm]
+# Empty by default -> NoOpBackend is selected, tool works fully offline.
+# Set api_key + base_url later to point at an Anthropic-compatible endpoint
+# (e.g. an internal Claude Enterprise gateway) with no code changes required.
+api_key = ""
+base_url = ""
+model = ""

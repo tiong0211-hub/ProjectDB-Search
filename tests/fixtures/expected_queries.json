@@ -1,0 +1,30 @@
+[
+  {
+    "query": "P&ID for unit 3 riverside plant 2021",
+    "expected_relative_path": "RiversidePlant/PID/RiversidePlant_PID_Unit3_2021.pdf"
+  },
+  {
+    "query": "isometric drawing for HX-203",
+    "expected_relative_path": "RiversidePlant/Isometric/HX-203_Isometric_Rev2.pdf"
+  },
+  {
+    "query": "datasheet for TK-14 riverside plant 2019",
+    "expected_relative_path": "RiversidePlant/Datasheet/TK-14_Datasheet_2019.pdf"
+  },
+  {
+    "query": "safety review memo riverside plant 2020",
+    "expected_relative_path": "RiversidePlant/Memo/RiversidePlant_Memo_2020_SafetyReview.pdf"
+  },
+  {
+    "query": "compressor station memo",
+    "expected_relative_path": "CompressorStation/Memo/old_backup_copy_final_v2.pdf"
+  },
+  {
+    "query": "electrical photo motor room 2019",
+    "expected_relative_path": "CompressorStation/Electrical/IMG_20190304_Electrical_MotorRoom.jpg"
+  },
+  {
+    "query": "P&ID compressor station unit 1 2018",
+    "expected_relative_path": "CompressorStation/PID/CompressorStation_PID_Unit1_2018.pdf"
+  }
+]
