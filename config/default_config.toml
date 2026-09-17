@@ -4,12 +4,18 @@
 # time) via the same rule set — see filename_parser.py / query_parser.py.
 
 [doc_type_patterns]
-"P&ID" = ["p&id", "p and id", "\\bpid\\b"]
-"isometric" = ["iso(metric)?"]
-"memo" = ["memo", "technical note", "\\btn\\b"]
-"photo" = ["photo", "\\bimg\\b", "\\bpic\\b"]
-"drawing" = ["drawing", "\\bdwg\\b"]
-"datasheet" = ["datasheet", "data sheet", "\\bds\\b"]
+# Korean synonyms are included alongside the English/abbreviation ones --
+# the regex engine and tokenizer are script-agnostic (see
+# filename_parser.py's Hangul-aware _TOKEN_SPLIT_RE), so a Korean filename
+# matches exactly the same way an English one does. Add more synonyms here
+# as you find real naming variants in your corpus -- this is a config
+# change, not a code change.
+"P&ID" = ["p&id", "p and id", "\\bpid\\b", "배관계장도", "배관\\s*및\\s*계장도"]
+"isometric" = ["iso(metric)?", "아이소(메트릭)?", "등각도"]
+"memo" = ["memo", "technical note", "\\btn\\b", "메모", "기술\\s*메모"]
+"photo" = ["photo", "\\bimg\\b", "\\bpic\\b", "사진"]
+"drawing" = ["drawing", "\\bdwg\\b", "도면"]
+"datasheet" = ["datasheet", "data sheet", "\\bds\\b", "데이터\\s*시트"]
 
 [project_name_patterns]
 # Known project names, matched as literal (case-insensitive) substrings.
@@ -29,10 +35,10 @@
 "Compressor Station" = ["compressor\\s*station"]
 
 [department_patterns]
-"Electrical" = ["electrical", "\\belec\\b"]
-"Mechanical" = ["mechanical", "\\bmech\\b"]
-"Civil" = ["civil"]
-"Process" = ["process"]
+"Electrical" = ["electrical", "\\belec\\b", "전기"]
+"Mechanical" = ["mechanical", "\\bmech\\b", "기계"]
+"Civil" = ["civil", "토목"]
+"Process" = ["process", "공정"]
 
 [equipment_tag_pattern]
 # e.g. P-101A, HX-203, TK-14
