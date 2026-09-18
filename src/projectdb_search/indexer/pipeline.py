@@ -24,11 +24,16 @@ combined pass take hours on a few thousand files. Splitting means the
 (fast, always necessary) part isn't held hostage by the (slow, often
 skippable in practice once project names are registered) part.
 
-Only PDFs and plain image files are ever opened here (see
-`config.extraction.pdf_extensions` / `image_extensions`). Office formats
-(Word/Excel/PowerPoint) are out of scope on purpose — many real copies of
-those are internal security-restricted files — and are never walked in the
-first place, regardless of `needs_fallback`.
+Every file in the corpus is walked and indexed by filename/folder name here,
+regardless of extension -- Office documents (Word/Excel/PowerPoint) included,
+since search and "Open file" both need to work across all file types. What's
+restricted is Stage 2's *content* access: only PDFs and plain image files are
+ever opened to read their bytes (see `config.extraction.pdf_extensions` /
+`image_extensions`). Office formats are excluded from that on purpose --
+many real copies are internal security-restricted files this tool has no way
+to tell apart from ordinary ones, so it never attempts to open any of them,
+however incomplete their filename-derived metadata is (see
+`_process_pending_record`'s fallback branch).
 """
 
 from __future__ import annotations
@@ -95,8 +100,25 @@ def needs_fallback(record: DocumentRecord) -> bool:
     return any(getattr(record, field_name) is None for field_name in REQUIRED_FIELDS)
 
 
-def _walk_corpus(corpus_root: Path, supported_extensions: set[str]) -> list[Path]:
-    """Every supported file under the corpus, as (sorted) absolute paths.
+# Not real documents -- OS/app-generated junk that would otherwise pollute
+# every search result list. Everything else is walked and indexed by
+# filename regardless of extension (Office formats included) -- only
+# run_deep_scan()'s per-file extension check (pdf_extensions/
+# image_extensions) decides what content is ever actually opened.
+_SKIP_EXACT_NAMES = {"desktop.ini", "thumbs.db"}
+
+
+def _is_junk_file(filename: str) -> bool:
+    if filename.lower() in _SKIP_EXACT_NAMES:
+        return True
+    # Office's own lock file for a currently-open document (~$report.docx),
+    # and dotfiles (macOS .DS_Store, sync-client markers).
+    return filename.startswith("~$") or filename.startswith(".")
+
+
+def _walk_corpus(corpus_root: Path) -> list[Path]:
+    """Every file under the corpus (minus obvious OS/app junk -- see
+    `_is_junk_file`), as (sorted) absolute paths, regardless of extension.
 
     Uses os.walk rather than `Path.rglob("*")` + `p.is_file()`: os.walk is
     scandir-based and already knows which entries are files, whereas the
@@ -116,7 +138,7 @@ def _walk_corpus(corpus_root: Path, supported_extensions: set[str]) -> list[Path
     for dirpath, _dirnames, filenames in os.walk(runtime_paths.to_extended_path(corpus_root)):
         directory = Path(runtime_paths.strip_extended_path(dirpath))
         for filename in filenames:
-            if os.path.splitext(filename)[1].lower() in supported_extensions:
+            if not _is_junk_file(filename):
                 found.append(directory / filename)
     return sorted(found)
 
@@ -210,8 +232,14 @@ def _process_pending_record(
         elif ext in config.extraction.image_extensions:
             record = run_image_ocr_fallback(file_path, record, parser, ocr_backend, config, log_dir)
         else:
-            # Shouldn't happen (only pdf/image extensions are ever walked),
-            # but never leave a record stuck in pending_deep_scan forever.
+            # Any format Stage 1 doesn't attempt content extraction on --
+            # notably Office documents (Word/Excel/PowerPoint), which are
+            # indexed and searchable by filename but deliberately never
+            # opened (many real copies are internal security-restricted
+            # files this tool can't tell apart from ordinary ones). Never
+            # leave a record stuck in pending_deep_scan forever -- it stays
+            # findable by filename, just flagged for a human to fill in
+            # the rest if needed.
             record.extraction_status = "needs_review"
             logging_utils.append_review_queue(
                 log_dir, record.file_path, reason="unsupported_extension_for_deep_scan", confidence=None
@@ -277,9 +305,8 @@ def run_pipeline(
     index_store.save_corpus_root(index_dir, corpus_root)
 
     manifest = {} if force_rebuild else index_store.load_manifest(index_dir)
-    supported_extensions = config.extraction.pdf_extensions | config.extraction.image_extensions
     report(PHASE_SCANNING)
-    files = _walk_corpus(corpus_root, supported_extensions)
+    files = _walk_corpus(corpus_root)
     parser = FilenameParser(config)
 
     total_files = len(files)

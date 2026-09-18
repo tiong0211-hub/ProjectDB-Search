@@ -2,10 +2,15 @@
 {% block content %}
 <h2>Index documents</h2>
 <p class="hint">
-  Point this at the folder containing your PDFs, scans, and photos. Indexing
-  only reads files there — it never modifies or moves your documents. Re-run
-  it any time to pick up new or changed files. This step only reads
-  filenames/folder names, so it's fast even over a large folder.
+  Point this at the folder containing your documents — PDFs, scans, photos,
+  and other files (Word/Excel/PowerPoint, etc.) are all indexed and
+  searchable by filename. Indexing only reads files there — it never
+  modifies or moves your documents. Re-run it any time to pick up new or
+  changed files. This step only reads filenames/folder names, so it's fast
+  even over a large folder. (The optional deep scan below reads file
+  content for PDFs/scanned images only — it never opens Word/Excel/
+  PowerPoint files, since many real copies of those are internal
+  security-restricted documents.)
 </p>
 
 {% if last_indexed %}

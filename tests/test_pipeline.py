@@ -130,21 +130,79 @@ def test_run_pipeline_stops_early_when_cancelled_and_can_resume(
     assert len(inverted.documents) == second.total_files
 
 
-def test_office_formats_are_never_walked(corpus_root: Path, tmp_path: Path, app_config: AppConfig):
-    """Security constraint: Office documents (many are internal
-    security-restricted files at the target company) must never be opened
-    or even discovered by the indexer, regardless of extraction settings.
+def test_office_formats_are_indexed_by_filename_but_content_is_never_opened(
+    corpus_root: Path, tmp_path: Path, app_config: AppConfig, monkeypatch
+):
+    """Search/browse must work for every file type, Office documents
+    included -- only *content* access (deep scan's PDF-text/OCR fallback)
+    is restricted, since many real Word/Excel/PowerPoint copies are
+    internal security-restricted files this tool can't tell apart from
+    ordinary ones. A well-named Office file needs no deep scan at all and
+    should just be searchable immediately; a poorly-named one is still
+    findable by filename, just flagged for a human instead of ever having
+    its bytes opened.
     """
-    (corpus_root / "Unsorted" / "confidential_budget.xlsx").write_bytes(b"not a real xlsx, just a probe")
-    (corpus_root / "Unsorted" / "contract_draft.docx").write_bytes(b"not a real docx, just a probe")
+    (corpus_root / "Unsorted" / "RiversidePlant_Datasheet_TK-99.xlsx").write_bytes(b"not a real xlsx, just a probe")
+    (corpus_root / "Unsorted" / "confidential_budget.docx").write_bytes(b"not a real docx, just a probe")
+
+    calls: list[str] = []
+    monkeypatch.setattr(pdf_extractor, "extract_text_layer", lambda *a, **k: calls.append("text"))
+    monkeypatch.setattr(pdf_extractor, "render_pages_to_images", lambda *a, **k: calls.append("render"))
+
+    index_dir = tmp_path / "index"
+    log_dir = tmp_path / "logs"
+    run_pipeline(corpus_root, index_dir, app_config, log_dir=log_dir)
+
+    from projectdb_search.storage.index_store import load_all_records
+
+    records_by_path = {r.file_path: r for r in load_all_records(index_dir)}
+    well_named = records_by_path["Unsorted/RiversidePlant_Datasheet_TK-99.xlsx"]
+    poorly_named = records_by_path["Unsorted/confidential_budget.docx"]
+
+    # Findable by filename alone -- no deep scan needed for the well-named
+    # one, and the poorly-named one is still in the index (just pending).
+    assert well_named.project_name == "Riverside Plant"
+    assert well_named.doc_type == "datasheet"
+    assert well_named.extraction_status == "ok"
+    assert poorly_named.extraction_status == "pending_deep_scan"
+
+    # Deep scan resolves the pending one to needs_review -- flagged for a
+    # human, never opened -- without ever touching the extraction backends.
+    from projectdb_search.indexer.pipeline import run_deep_scan
+    from projectdb_search.indexer.ocr.base import OCRResult
+
+    class _FailIfCalledOCR:
+        def recognize(self, images):
+            calls.append("ocr")
+            return OCRResult(text="", confidence=0.0)
+
+    run_deep_scan(index_dir, app_config, corpus_root=corpus_root, log_dir=log_dir, ocr_backend=_FailIfCalledOCR())
+
+    poorly_named_after = next(
+        r for r in load_all_records(index_dir) if r.file_path == "Unsorted/confidential_budget.docx"
+    )
+    assert poorly_named_after.extraction_status == "needs_review"
+    assert calls == []  # neither PDF text/render nor OCR was ever invoked
+
+
+def test_os_and_office_junk_files_are_excluded_from_the_index(
+    corpus_root: Path, tmp_path: Path, app_config: AppConfig
+):
+    """These are byproducts OneDrive/Windows/Office create automatically,
+    not real documents -- indexing them would just pollute every search
+    result list with noise nobody is looking for.
+    """
+    junk_names = ["desktop.ini", "Thumbs.db", "~$report.docx", ".DS_Store"]
+    for name in junk_names:
+        (corpus_root / "Unsorted" / name).write_bytes(b"junk")
 
     index_dir = tmp_path / "index"
     run_pipeline(corpus_root, index_dir, app_config)
 
     from projectdb_search.storage.index_store import load_all_records
 
-    all_paths = {r.file_path for r in load_all_records(index_dir)}
-    assert not any(p.endswith(".xlsx") or p.endswith(".docx") for p in all_paths)
+    indexed_names = {Path(r.file_path).name for r in load_all_records(index_dir)}
+    assert not indexed_names & set(junk_names)
 
 
 # --- Stage 2 (run_deep_scan): PDF-text/OCR fallback, resumable -------------

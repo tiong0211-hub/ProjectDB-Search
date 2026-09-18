@@ -49,10 +49,12 @@ Implemented so far:
 - Test fixtures + an automated Top-3 correctness check + a search-speed
   benchmark
 
-**Scope note**: only PDFs and plain image files (jpg/png/tif) are ever
-opened for text/OCR extraction. Office formats (Word/Excel/PowerPoint) are
-intentionally never parsed — many real copies of those are internal
-security-restricted files — and aren't even walked by the indexer.
+**Scope note**: every file in the corpus is indexed and searchable by
+filename, Office formats (Word/Excel/PowerPoint) included. Only PDFs and
+plain image files (jpg/png/tif) are ever opened for text/OCR extraction —
+Office formats are intentionally never parsed for content, since many real
+copies of those are internal security-restricted files this tool has no way
+to tell apart from ordinary ones.
 
 ## Deploying to a network with no internet access
 
