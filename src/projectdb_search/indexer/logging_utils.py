@@ -20,6 +20,7 @@ from typing import Any
 
 PDF_EXTRACTION_LOG_FILENAME = "pdf_extraction_log.jsonl"
 REVIEW_QUEUE_FILENAME = "review_queue.jsonl"
+INDEX_RUN_LOG_FILENAME = "index_runs.jsonl"
 
 
 def _append_jsonl(path: Path, record: dict[str, Any]) -> None:
@@ -66,6 +67,39 @@ def append_review_queue(
 
 def read_review_queue(log_dir: Path) -> list[dict[str, Any]]:
     path = log_dir / REVIEW_QUEUE_FILENAME
+    if not path.exists():
+        return []
+    with open(path, encoding="utf-8") as f:
+        return [json.loads(line) for line in f if line.strip()]
+
+
+def append_index_run(
+    log_dir: Path,
+    corpus_root: str,
+    total_files: int,
+    processed: int,
+    skipped_unchanged: int,
+    corpus_root_changed: bool,
+) -> None:
+    """One entry per `run_pipeline()` call, including no-op runs where
+    nothing had changed -- "when did I last even check this folder" is
+    useful on its own, so people don't re-index just to find out.
+    """
+    _append_jsonl(
+        log_dir / INDEX_RUN_LOG_FILENAME,
+        {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "corpus_root": corpus_root,
+            "total_files": total_files,
+            "processed": processed,
+            "skipped_unchanged": skipped_unchanged,
+            "corpus_root_changed": corpus_root_changed,
+        },
+    )
+
+
+def read_index_runs(log_dir: Path) -> list[dict[str, Any]]:
+    path = log_dir / INDEX_RUN_LOG_FILENAME
     if not path.exists():
         return []
     with open(path, encoding="utf-8") as f:

@@ -45,7 +45,20 @@ body {
 
 .site-header h1 { font-size: 1.1rem; margin: 0; }
 .site-header a { color: var(--fg); text-decoration: none; }
-.site-header nav a { color: var(--accent); }
+.site-header nav { display: flex; gap: 0.5rem; }
+
+/* Plain colored text didn't read as clickable -- a bordered pill makes
+   every nav destination look like a button, not just page-title text. */
+.nav-link {
+  padding: 0.4rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.85rem;
+  color: var(--fg);
+  text-decoration: none;
+  background: var(--bg);
+}
+.nav-link:hover { border-color: var(--accent); color: var(--accent); }
 
 main {
   max-width: 780px;
@@ -77,6 +90,28 @@ main {
   color: white;
   cursor: pointer;
 }
+
+.top-n-select {
+  padding: 0.6rem 0.5rem;
+  font-size: 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.show-more-btn {
+  display: block;
+  margin: 0.8rem auto 0;
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+.show-more-btn:hover { border-color: var(--accent); color: var(--accent); }
 
 .results { margin-top: 2rem; }
 
@@ -127,7 +162,37 @@ main {
 .feedback-btn:disabled, .reveal-btn:disabled { opacity: 0.6; cursor: default; }
 .feedback-thanks, .feedback-error { color: var(--muted); font-size: 0.85rem; }
 
+/* Used by both the Stage-1 indexing panel and the deep-scan panel's Cancel
+   buttons -- deliberately its own class (not .feedback-btn), which is the
+   search-results "Correct"/"Not this one" class picked up by a global,
+   unrelated click handler (see app.js) that assumes a #search-context
+   element exists. Styled distinctly (hover turns red) since cancelling a
+   running job is a different kind of action than the other buttons here. */
+.cancel-btn {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  border-radius: 6px;
+  padding: 0.3rem 0.8rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+  margin-top: 0.6rem;
+}
+.cancel-btn:hover { border-color: #b42318; color: #b42318; }
+.cancel-btn:disabled { opacity: 0.6; cursor: default; }
+
 .empty { color: var(--muted); }
+
+.index-history { margin-top: 1.2rem; }
+.index-history summary { cursor: pointer; color: var(--muted); font-size: 0.9rem; }
+.index-history-folder {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+}
 
 .review-table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
 .review-table th, .review-table td {

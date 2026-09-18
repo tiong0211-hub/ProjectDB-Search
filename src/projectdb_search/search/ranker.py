@@ -273,7 +273,11 @@ def search(
         score_document(query, _candidate_record(index_dir, inverted, doc_id), ranking, plan)
         for doc_id in candidate_ids
     ]
-    scored.sort(key=lambda m: m.score, reverse=True)
+    # Secondary key breaks ties deterministically -- candidate_ids is a
+    # set, so without this, which of several equally-scored documents
+    # (e.g. hundreds sharing a generic doc_type like "datasheet") lands in
+    # the visible slice was effectively random from one run to the next.
+    scored.sort(key=lambda m: (-m.score, m.record.file_path))
 
     ambiguous = is_ambiguous(scored, ranking)
     top = scored[:top_n]

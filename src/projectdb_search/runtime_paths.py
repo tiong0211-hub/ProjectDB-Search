@@ -37,3 +37,51 @@ def configure_tesseract() -> None:
     tesseract_dir = root / "tesseract"
     pytesseract.pytesseract.tesseract_cmd = str(tesseract_dir / "tesseract.exe")
     os.environ["TESSDATA_PREFIX"] = str(tesseract_dir / "tessdata")
+
+
+# Headroom below Windows' legacy ~260-char MAX_PATH limit -- files under
+# this length are left alone (keeps them readable in logs/errors), and
+# anything at or past it gets the `\\?\` treatment before it's a problem.
+_LONG_PATH_THRESHOLD = 240
+
+
+def to_extended_path(path: Path) -> Path:
+    """Windows only: prefixes an absolute path with `\\\\?\\` (or
+    `\\\\?\\UNC\\` for a UNC path) so Win32 file APIs skip the ~260-character
+    MAX_PATH limit for this one call.
+
+    This works regardless of the machine's "Enable Win32 long paths" group
+    policy (`LongPathsEnabled`), which needs admin rights this app's users
+    may not have -- corpora synced from OneDrive under deeply nested
+    company folder names routinely exceed 260 characters. No-op on
+    non-Windows and for paths already short enough that it wouldn't
+    matter.
+
+    Deliberately not applied to anything this app stores or displays
+    (`record.file_path`, manifest entries, on-screen paths) -- only to the
+    path handed to an actual filesystem call, so what a human reads never
+    carries this prefix.
+    """
+    if sys.platform != "win32":
+        return path
+    text = str(path)
+    if text.startswith("\\\\?\\") or len(text) < _LONG_PATH_THRESHOLD:
+        return path
+    if text.startswith("\\\\"):
+        return Path("\\\\?\\UNC\\" + text[2:])
+    return Path("\\\\?\\" + text)
+
+
+def strip_extended_path(text: str) -> str:
+    """Reverses `to_extended_path` on a string path. Needed because
+    `os.walk()` builds every yielded dirpath by extending whatever root it
+    was given -- walking an extended-prefixed root means every dirpath it
+    yields carries the prefix too, and callers that compare against a
+    plain corpus_root (relative_to, manifest keys, ...) need it gone
+    again. A no-op for a path that never had the prefix.
+    """
+    if text.startswith("\\\\?\\UNC\\"):
+        return "\\\\" + text[len("\\\\?\\UNC\\") :]
+    if text.startswith("\\\\?\\"):
+        return text[len("\\\\?\\") :]
+    return text

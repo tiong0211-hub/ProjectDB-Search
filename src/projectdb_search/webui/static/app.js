@@ -7,6 +7,7 @@ function initIndexProgress() {
   const bar = document.getElementById("index-progress-bar");
   const status = document.getElementById("index-progress-status");
   const fileLine = document.getElementById("index-progress-file");
+  const cancelBtn = document.getElementById("index-cancel");
   let pollHandle = null;
 
   function render(state) {
@@ -94,6 +95,15 @@ function initIndexProgress() {
         submitBtn.textContent = "Build index";
       });
   });
+
+  if (cancelBtn) {
+    cancelBtn.addEventListener("click", function () {
+      cancelBtn.disabled = true;
+      fetch("/index-documents/cancel", { method: "POST" }).finally(function () {
+        cancelBtn.disabled = false;
+      });
+    });
+  }
 
   // An index started from another tab (or before a reload) keeps running
   // in the background -- pick its progress back up instead of showing an
@@ -225,7 +235,12 @@ document.addEventListener("click", function (event) {
         return;
       }
       if (!response.ok) throw new Error("request failed");
-      btn.textContent = "Opened ✓";
+      return response.json().then(function (body) {
+        // Path too long for Explorer to select the exact file (Windows
+        // MAX_PATH) -- we opened the parent folder instead, so say so
+        // rather than claiming the file itself was found.
+        btn.textContent = body.warning === "path_too_long" ? "Folder only (path too long)" : "Opened ✓";
+      });
     })
     .catch(function () {
       btn.textContent = "Failed";
@@ -236,6 +251,26 @@ document.addEventListener("click", function (event) {
         btn.disabled = false;
       }, 1500);
     });
+});
+
+document.addEventListener("click", function (event) {
+  const btn = event.target.closest("#show-more-results");
+  if (!btn) return;
+
+  // The full (up to 200) candidate pool is already in the page, just
+  // hidden -- revealing a batch is pure DOM work, no request needed.
+  const batch = Number(btn.dataset.revealedBatches || "0");
+  document.querySelectorAll('.result-item[data-batch="' + batch + '"]').forEach(function (item) {
+    item.hidden = false;
+  });
+  btn.dataset.revealedBatches = String(batch + 1);
+
+  const remaining = document.querySelectorAll(".result-item[hidden]").length;
+  if (remaining === 0) {
+    btn.remove();
+  } else {
+    btn.textContent = "Show " + Math.min(remaining, 25) + " more (of " + remaining + ")";
+  }
 });
 
 document.addEventListener("click", function (event) {

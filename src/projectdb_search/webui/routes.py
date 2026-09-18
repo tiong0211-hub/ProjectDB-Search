@@ -17,6 +17,7 @@ from pathlib import Path
 
 from flask import Flask, abort, current_app, jsonify, render_template, request, send_file
 
+from projectdb_search import runtime_paths
 from projectdb_search.indexer import logging_utils
 from projectdb_search.indexer.filename_parser import FilenameParser
 from projectdb_search.indexer.pipeline import run_deep_scan, run_pipeline
@@ -35,6 +36,17 @@ from projectdb_search.webui.reveal import reveal_in_file_manager
 # scan takes. One job at a time is enough for this single-user local tool;
 # state lives in this plain dict rather than a database since it's only
 # ever read/written by this one process.
+# Web search result count: the dropdown lets someone widen how many
+# candidates they can browse (a generic query like "Data sheet" can tie
+# hundreds of documents at the same score -- see ranker.py's tie-break
+# sort), without a fixed top-3 hiding the one they actually want.
+# MAX_TOP_N is also the pool size always fetched internally (see
+# _run_search) so the "show more" reveal below never needs another
+# request -- scoring the full candidate set costs the same regardless of
+# how many are kept, so fetching the max up front is free.
+DEFAULT_VISIBLE_TOP_N = 25
+MAX_TOP_N = 200
+
 _deep_scan_lock = threading.Lock()
 _deep_scan_state: dict = {
     "running": False,
@@ -58,6 +70,7 @@ _index_state: dict = {
     "done": 0,
     "total": 0,
     "current_file": "",
+    "cancel_requested": False,
     "summary": None,
     "error": None,
 }
@@ -76,6 +89,27 @@ def _format_built_at(built_at: str) -> str | None:
         return datetime.fromisoformat(built_at).astimezone().strftime("%Y-%m-%d %H:%M")
     except ValueError:
         return None
+
+
+def _recent_index_runs(log_dir: Path, limit: int = 20) -> list[dict]:
+    """Most-recent-first index-run history, with a display-ready local
+    timestamp -- lets someone check "did I already index this folder, and
+    when" without re-running Build index just to find out.
+    """
+    runs = logging_utils.read_index_runs(log_dir)
+    runs.reverse()
+    out = []
+    for run in runs[:limit]:
+        out.append({**run, "when": _format_built_at(run.get("timestamp", "")) or run.get("timestamp", "")})
+    return out
+
+
+def _clamp_top_n(raw: str | None) -> int:
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_VISIBLE_TOP_N
+    return max(1, min(value, MAX_TOP_N))
 
 
 def _count_pending_deep_scan(index_dir: Path) -> int:
@@ -99,9 +133,19 @@ def _run_index_job(corpus_path: Path, index_dir: Path, config, log_dir: Path, re
             _index_state["total"] = total
             _index_state["current_file"] = current_file
 
+    def should_cancel() -> bool:
+        with _index_lock:
+            return _index_state["cancel_requested"]
+
     try:
         summary = run_pipeline(
-            corpus_path, index_dir, config, force_rebuild=rebuild, log_dir=log_dir, progress_callback=on_progress
+            corpus_path,
+            index_dir,
+            config,
+            force_rebuild=rebuild,
+            log_dir=log_dir,
+            progress_callback=on_progress,
+            should_cancel=should_cancel,
         )
         with _index_lock:
             _index_state["summary"] = {
@@ -110,6 +154,7 @@ def _run_index_job(corpus_path: Path, index_dir: Path, config, log_dir: Path, re
                 "skipped_unchanged": summary.skipped_unchanged,
                 "corpus_root_changed": summary.corpus_root_changed,
                 "pending_deep_scan": summary.pending_deep_scan,
+                "cancelled": summary.cancelled,
             }
     except Exception as exc:
         with _index_lock:
@@ -170,6 +215,7 @@ def register_routes(app: Flask) -> None:
             has_index=inverted is not None,
             last_indexed=_format_built_at(inverted.built_at) if inverted else None,
             indexed_root=str(corpus_root) if corpus_root else None,
+            selected_top_n=DEFAULT_VISIBLE_TOP_N,
         )
 
     @app.post("/search")
@@ -181,12 +227,14 @@ def register_routes(app: Flask) -> None:
         last_indexed = _format_built_at(inverted.built_at)
         corpus_root = current_app.config["CORPUS_ROOT"] or index_store.load_corpus_root(index_dir)
         indexed_root = str(corpus_root) if corpus_root else None
+        selected_top_n = _clamp_top_n(request.form.get("top_n"))
 
         query_text = request.form.get("query", "").strip()
         if not query_text:
             return render_template(
                 "search.html", query="", results=None, has_index=True,
                 last_indexed=last_indexed, indexed_root=indexed_root,
+                selected_top_n=selected_top_n,
             )
 
         result = _run_search(query_text)
@@ -199,6 +247,8 @@ def register_routes(app: Flask) -> None:
             indexed_root=indexed_root,
             ambiguous=result.ambiguous,
             used_llm_rerank=result.used_llm_rerank,
+            candidate_count=result.candidate_count,
+            selected_top_n=selected_top_n,
             search_context={
                 "query": query_text,
                 "top_doc_ids": [m.record.doc_id for m in result.top],
@@ -211,6 +261,7 @@ def register_routes(app: Flask) -> None:
     @app.get("/index-documents")
     def index_documents_page():
         index_dir = current_app.config["INDEX_DIR"]
+        log_dir = current_app.config["LOG_DIR"]
         default_corpus_root = current_app.config["CORPUS_ROOT"] or index_store.load_corpus_root(index_dir)
         inverted = load_inverted_index_cached(index_dir)
         # A background run reloads this page when it finishes, so hand its
@@ -229,6 +280,7 @@ def register_routes(app: Flask) -> None:
             error=error,
             pending_deep_scan_count=_count_pending_deep_scan(index_dir),
             last_indexed=_format_built_at(inverted.built_at) if inverted else None,
+            index_runs=_recent_index_runs(log_dir),
         )
 
     @app.post("/index-documents")
@@ -250,6 +302,7 @@ def register_routes(app: Flask) -> None:
                 error=f"'{corpus_root_input}' is not a folder that exists on this machine.",
                 pending_deep_scan_count=_count_pending_deep_scan(index_dir),
                 last_indexed=_format_built_at(inverted.built_at) if inverted else None,
+                index_runs=_recent_index_runs(log_dir),
             )
 
         # Stage 1 only -- filename/folder parsing. Fast even over a large
@@ -266,6 +319,7 @@ def register_routes(app: Flask) -> None:
             error=None,
             pending_deep_scan_count=summary.pending_deep_scan,
             last_indexed=_format_built_at(inverted.built_at) if inverted else None,
+            index_runs=_recent_index_runs(log_dir),
         )
 
     @app.post("/index-documents/start")
@@ -289,7 +343,14 @@ def register_routes(app: Flask) -> None:
             if _index_state["running"]:
                 return jsonify({"status": "already_running"}), 409
             _index_state.update(
-                running=True, phase="", done=0, total=0, current_file="", summary=None, error=None
+                running=True,
+                phase="",
+                done=0,
+                total=0,
+                current_file="",
+                cancel_requested=False,
+                summary=None,
+                error=None,
             )
 
         current_app.config["CORPUS_ROOT"] = corpus_path.resolve()
@@ -302,6 +363,20 @@ def register_routes(app: Flask) -> None:
     def index_documents_progress():
         with _index_lock:
             return jsonify(dict(_index_state))
+
+    @app.post("/index-documents/cancel")
+    def cancel_index_documents():
+        """Stops Stage 1 at the next file boundary -- guards against a
+        wrong-folder click (e.g. a 38,000-file OneDrive tree) that would
+        otherwise have to run to completion. Same shape as
+        /deep-scan/cancel: 409 if nothing is running, since there's
+        nothing to cancel.
+        """
+        with _index_lock:
+            if not _index_state["running"]:
+                return jsonify({"status": "not_running"}), 409
+            _index_state["cancel_requested"] = True
+        return jsonify({"status": "cancel_requested"})
 
     @app.post("/deep-scan")
     def start_deep_scan():
@@ -376,9 +451,15 @@ def register_routes(app: Flask) -> None:
             abort(500, "Corpus root is unknown. Re-run `projectdb-search index` to record it.")
 
         full_path = Path(corpus_root) / record.file_path
-        if not full_path.exists():
+        # exists()/send_file() go through Win32 file APIs, which silently
+        # can't find a path past ~260 chars -- extend it here (deeply
+        # nested OneDrive corpora routinely exceed that). explorer.exe
+        # below (reveal_file) is a separate GUI process that doesn't
+        # understand the `\\?\` prefix, so it isn't used there.
+        real_path = runtime_paths.to_extended_path(full_path)
+        if not real_path.exists():
             abort(404)
-        return send_file(full_path)
+        return send_file(real_path)
 
     @app.post("/reveal/<doc_id>")
     def reveal_file(doc_id: str):
@@ -397,12 +478,16 @@ def register_routes(app: Flask) -> None:
             abort(500, "Corpus root is unknown. Re-run `projectdb-search index` to record it.")
 
         full_path = Path(corpus_root) / record.file_path
-        if not full_path.exists():
+        if not runtime_paths.to_extended_path(full_path).exists():
             abort(404)
 
-        if not reveal_in_file_manager(full_path):
+        # Passed un-extended: explorer.exe is a separate GUI process that
+        # doesn't understand the `\\?\` prefix -- reveal_in_file_manager
+        # has its own fallback for paths too long for Explorer to select.
+        ok, warning = reveal_in_file_manager(full_path)
+        if not ok:
             return jsonify({"status": "unsupported"}), 501
-        return jsonify({"status": "ok"})
+        return jsonify({"status": "ok", "warning": warning})
 
     @app.get("/review-queue")
     def review_queue_page():
@@ -420,7 +505,11 @@ def _run_search(query_text: str) -> SearchResult:
     parser = FilenameParser(config)
     parsed_query = parse_query(query_text, parser)
     llm_backend = get_llm_backend(config)
-    return run_search(parsed_query, index_dir, inverted, config.ranking, llm_backend, top_n=3)
+    # Always fetches the max pool (MAX_TOP_N), independent of the visible
+    # count the user picked -- scoring the full candidate set costs the
+    # same either way (see ranker.search()), so the extra rows are free to
+    # have on hand for "show more" (results.html) without another request.
+    return run_search(parsed_query, index_dir, inverted, config.ranking, llm_backend, top_n=MAX_TOP_N)
 
 
 def _build_results_view(result: SearchResult) -> list[dict]:

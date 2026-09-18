@@ -20,6 +20,8 @@ from pathlib import Path
 import pypdfium2 as pdfium
 from PIL import Image
 
+from projectdb_search import runtime_paths
+
 
 def extract_text_layer(path: Path, max_pages: int | None = None) -> str | None:
     """Direct text extraction from a PDF's embedded text layer, if any.
@@ -35,7 +37,7 @@ def extract_text_layer(path: Path, max_pages: int | None = None) -> str | None:
     (see config.extraction.min_text_chars), not this function.
     """
     try:
-        pdf = pdfium.PdfDocument(str(path))
+        pdf = pdfium.PdfDocument(str(runtime_paths.to_extended_path(path)))
         pages = pdf if max_pages is None else [pdf[i] for i in range(min(max_pages, len(pdf)))]
         pages_text = []
         for page in pages:
@@ -68,7 +70,7 @@ def render_pages_to_images(
     these, and one unreadable file must never abort the whole indexing run.
     """
     try:
-        pdf = pdfium.PdfDocument(str(path))
+        pdf = pdfium.PdfDocument(str(runtime_paths.to_extended_path(path)))
         pages = pdf if max_pages is None else [pdf[i] for i in range(min(max_pages, len(pdf)))]
         images = []
         for page in pages:

@@ -93,6 +93,43 @@ def test_run_pipeline_never_touches_pdf_or_ocr(
     assert summary.pending_deep_scan > 0  # sanity: the fixture corpus does have some
 
 
+def test_run_pipeline_stops_early_when_cancelled_and_can_resume(
+    corpus_root: Path, tmp_path: Path, app_config: AppConfig
+):
+    """Guards against an accidental click over a huge (e.g. 38,000-file
+    OneDrive) folder -- cancelling partway through must not lose what was
+    already indexed, and a later run must pick up exactly the rest rather
+    than reprocessing or skipping anything.
+    """
+    index_dir = tmp_path / "index"
+    log_dir = tmp_path / "logs"
+
+    cancel_after = {"count": 0}
+
+    def should_cancel() -> bool:
+        cancel_after["count"] += 1
+        return cancel_after["count"] > 1  # let one file through, then stop
+
+    first = run_pipeline(corpus_root, index_dir, app_config, log_dir=log_dir, should_cancel=should_cancel)
+    assert first.cancelled is True
+    assert 0 < first.processed < first.total_files
+
+    # What was processed before cancelling is already searchable.
+    inverted = load_inverted_index(index_dir)
+    assert inverted is not None
+    assert len(inverted.documents) == first.processed
+
+    # Resuming (no should_cancel this time) picks up exactly the rest --
+    # nothing already indexed is reprocessed, nothing is left behind.
+    second = run_pipeline(corpus_root, index_dir, app_config, log_dir=log_dir)
+    assert second.cancelled is False
+    assert second.processed == second.total_files - first.processed
+
+    inverted = load_inverted_index(index_dir)
+    assert inverted is not None
+    assert len(inverted.documents) == second.total_files
+
+
 def test_office_formats_are_never_walked(corpus_root: Path, tmp_path: Path, app_config: AppConfig):
     """Security constraint: Office documents (many are internal
     security-restricted files at the target company) must never be opened

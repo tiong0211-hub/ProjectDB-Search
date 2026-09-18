@@ -8,7 +8,11 @@
   filenames/folder names, so it's fast even over a large folder.
 </p>
 
-{% if last_indexed %}<p class="hint">Last indexed: {{ last_indexed }}</p>{% endif %}
+{% if last_indexed %}
+<p class="hint">
+  Last indexed: {{ last_indexed }}{% if default_corpus_root %} &middot; Folder: {{ default_corpus_root }}{% endif %}
+</p>
+{% endif %}
 
 {% if error %}
   <p class="error">{{ error }}</p>
@@ -31,6 +35,7 @@
   <div class="progress-bar"><div id="index-progress-bar" class="progress-bar-fill"></div></div>
   <p id="index-progress-status" class="hint"></p>
   <p id="index-progress-file" class="hint index-progress-file"></p>
+  <button id="index-cancel" class="cancel-btn" type="button">Cancel</button>
 </div>
 
 {% if summary %}
@@ -42,13 +47,41 @@
   </p>
 {% endif %}
 <div class="index-summary">
+  {% if summary.cancelled %}
+  <p>
+    <strong>Stopped.</strong> Indexed {{ summary.processed }} file(s) before cancelling, skipped
+    {{ summary.skipped_unchanged }} unchanged, {{ summary.total_files }} total files found.
+    What's done so far is searchable now — click Build index again to pick up where this left off.
+  </p>
+  {% else %}
   <p>
     <strong>Done.</strong> Indexed {{ summary.processed }} file(s), skipped
     {{ summary.skipped_unchanged }} unchanged, {{ summary.total_files }} total files found.
     Search is ready to use now.
   </p>
+  {% endif %}
   <p><a href="/">Go search &rarr;</a></p>
 </div>
+{% endif %}
+
+{% if index_runs %}
+<details class="index-history">
+  <summary>Indexing history ({{ index_runs|length }} recent run(s))</summary>
+  <table class="review-table">
+    <thead><tr><th>Folder</th><th>When</th><th>Indexed</th><th>Skipped</th><th>Total</th></tr></thead>
+    <tbody>
+    {% for run in index_runs %}
+      <tr>
+        <td class="index-history-folder">{{ run.corpus_root }}</td>
+        <td>{{ run.when }}</td>
+        <td>{{ run.processed }}</td>
+        <td>{{ run.skipped_unchanged }}</td>
+        <td>{{ run.total_files }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</details>
 {% endif %}
 
 <div id="deep-scan-section" data-pending-count="{{ pending_deep_scan_count or 0 }}">
@@ -70,7 +103,7 @@
   </p>
   <div class="progress-bar"><div id="deep-scan-bar" class="progress-bar-fill"></div></div>
   <p id="deep-scan-status" class="hint"></p>
-  <button id="deep-scan-cancel" class="feedback-btn" type="button">Cancel</button>
+  <button id="deep-scan-cancel" class="cancel-btn" type="button">Cancel</button>
 </div>
 </div>
 {% endblock %}

@@ -98,6 +98,12 @@ def _copy_app(out_dir: Path) -> None:
         REPO_ROOT / "src" / "projectdb_search", app_dir / "projectdb_search", dirs_exist_ok=True, ignore=ignore
     )
     shutil.copytree(REPO_ROOT / "config", out_dir / "config", dirs_exist_ok=True)
+    # Non-developer end users only ever see this dist/ folder, never the
+    # repo -- docs/USER_GUIDE.ko.md previously never made it into the
+    # actual package, so every first-time user got run.bat with zero
+    # instructions. Named in Korean, at the top level next to run.bat, so
+    # it's the obvious thing to open right after unzipping.
+    shutil.copy2(REPO_ROOT / "docs" / "USER_GUIDE.ko.md", out_dir / "사용설명서.md")
 
 
 def _copy_binaries(src_dir: Path, dest_dir: Path, label: str) -> None:

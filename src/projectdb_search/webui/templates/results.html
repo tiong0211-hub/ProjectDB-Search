@@ -8,10 +8,18 @@
   {% if not results %}
     <p class="empty">No matching documents found.</p>
   {% else %}
+    {% if candidate_count and candidate_count > results|length %}
+    <p class="hint">
+      {{ candidate_count }} document(s) matched — showing {{ results|length }}.
+      Add a more specific term (equipment tag, project name) to narrow it down.
+    </p>
+    {% endif %}
     <input type="hidden" id="search-context" value='{{ search_context | tojson }}'>
     <ol class="result-list">
       {% for r in results %}
-      <li class="result-item">
+      {% set visible_top_n = selected_top_n or 25 %}
+      <li class="result-item"
+          {% if loop.index0 >= visible_top_n %}hidden data-batch="{{ (loop.index0 - visible_top_n) // 25 }}"{% endif %}>
         <div class="result-path">{{ r.file_path }} <span class="score">score: {{ "%.1f"|format(r.score) }}</span></div>
         <div class="result-justification">{{ r.justification }}</div>
         <div class="result-actions">
@@ -23,5 +31,11 @@
       </li>
       {% endfor %}
     </ol>
+    {% if results|length > (selected_top_n or 25) %}
+    {% set remaining = results|length - (selected_top_n or 25) %}
+    <button type="button" id="show-more-results" class="show-more-btn" data-revealed-batches="0">
+      Show {{ [remaining, 25]|min }} more (of {{ remaining }})
+    </button>
+    {% endif %}
   {% endif %}
 </section>

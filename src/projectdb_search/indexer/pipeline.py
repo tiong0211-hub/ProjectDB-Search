@@ -78,6 +78,7 @@ class IndexRunSummary:
     skipped_unchanged: int
     corpus_root_changed: bool = False
     pending_deep_scan: int = 0
+    cancelled: bool = False
 
 
 @dataclass
@@ -103,9 +104,17 @@ def _walk_corpus(corpus_root: Path, supported_extensions: set[str]) -> list[Path
     syscall is nearly free locally but is a network round-trip each on a
     shared/OneDrive drive, which is exactly where these corpora live.
     """
+    # `to_extended_path` lets os.walk descend past Windows' ~260-char
+    # MAX_PATH into deeply nested OneDrive-style folder structures --
+    # without it, Windows silently omits those subfolders rather than
+    # raising, so files inside them would never even reach the loop below.
+    # os.walk builds every yielded dirpath by extending the root we hand
+    # it, so the `\\?\` prefix rides along on all of them -- stripped back
+    # off immediately so callers (relative_to(corpus_root), stat(), etc.)
+    # keep working against the same unprefixed corpus_root as before.
     found: list[Path] = []
-    for dirpath, _dirnames, filenames in os.walk(corpus_root):
-        directory = Path(dirpath)
+    for dirpath, _dirnames, filenames in os.walk(runtime_paths.to_extended_path(corpus_root)):
+        directory = Path(runtime_paths.strip_extended_path(dirpath))
         for filename in filenames:
             if os.path.splitext(filename)[1].lower() in supported_extensions:
                 found.append(directory / filename)
@@ -154,7 +163,7 @@ def run_image_ocr_fallback(
     log_dir: Path,
 ) -> DocumentRecord:
     try:
-        image = Image.open(file_path)
+        image = Image.open(runtime_paths.to_extended_path(file_path))
     except Exception:
         record.extraction_status = "needs_review"
         logging_utils.append_review_queue(log_dir, record.file_path, reason="unreadable_image", confidence=0.0)
@@ -228,6 +237,7 @@ def run_pipeline(
     force_rebuild: bool = False,
     log_dir: Path | None = None,
     progress_callback: IndexProgress | None = None,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> IndexRunSummary:
     """Stage 1: filename/folder metadata only. Never opens a PDF or image's
     contents -- see the module docstring for why. Always fast, and always
@@ -238,6 +248,14 @@ def run_pipeline(
     reported separately because it can't report a percentage -- the total
     isn't known until it finishes -- and on a network/OneDrive corpus it is
     the phase most likely to take visible time.
+
+    `should_cancel()` is polled once per file (same pattern as
+    `run_deep_scan`) -- lets someone stop an accidental run over the wrong
+    (e.g. a 38,000-file OneDrive) folder without waiting for it to finish.
+    Files already processed by the time it's cancelled are already
+    written, so the manifest/index rebuild below still runs on whatever
+    got done, and a later run resumes with the rest via the normal
+    unchanged-file skip.
     """
     def report(phase: str, done: int = 0, total: int = 0, current_file: str = "") -> None:
         if progress_callback is not None:
@@ -270,10 +288,15 @@ def run_pipeline(
     # Records written during this run, kept so the index rebuild below
     # doesn't have to read back from disk what we just wrote.
     fresh_records: dict[str, DocumentRecord] = {}
+    cancelled = False
     for position, file_path in enumerate(files, start=1):
+        if should_cancel is not None and should_cancel():
+            cancelled = True
+            break
+
         relative = file_path.relative_to(corpus_root)
         relative_str = str(relative)
-        stat_result = file_path.stat()  # the loop's one stat per file
+        stat_result = runtime_paths.to_extended_path(file_path).stat()  # the loop's one stat per file
 
         # Reported for skipped files too: "3,000 / 20,000" should reflect
         # how far through the folder we are, not just how much work landed.
@@ -303,6 +326,9 @@ def run_pipeline(
         # pure waste -- and it's the common case, since "re-run indexing to
         # pick up new files" usually finds nothing new.
         index_store.save_manifest(index_dir, manifest)
+        logging_utils.append_index_run(
+            log_dir, str(corpus_root), len(files), 0, skipped, corpus_root_changed
+        )
         return IndexRunSummary(
             total_files=len(files),
             processed=0,
@@ -311,6 +337,7 @@ def run_pipeline(
             pending_deep_scan=sum(
                 1 for d in existing.documents.values() if d.get("extraction_status") == "pending_deep_scan"
             ),
+            cancelled=cancelled,
         )
 
     index_store.save_manifest(index_dir, manifest)
@@ -323,12 +350,17 @@ def run_pipeline(
 
     pending_count = sum(1 for r in all_records if r.extraction_status == "pending_deep_scan")
 
+    logging_utils.append_index_run(
+        log_dir, str(corpus_root), len(files), processed, skipped, corpus_root_changed
+    )
+
     return IndexRunSummary(
         total_files=len(files),
         processed=processed,
         skipped_unchanged=skipped,
         corpus_root_changed=corpus_root_changed,
         pending_deep_scan=pending_count,
+        cancelled=cancelled,
     )
 
 

@@ -13,26 +13,40 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Explorer's own GUI remains unreliable selecting a file whose full path is
+# near/over the historical MAX_PATH (260-char) limit, even with Windows'
+# OS-level long-path support enabled -- a well-known limitation of
+# Explorer itself (its selection/navigation code, not just file I/O), not
+# something this app can fully work around. Below this length, opening the
+# parent folder is far more likely to actually succeed than trying (and
+# silently failing) to select the exact file.
+WINDOWS_PATH_WARN_LENGTH = 250
 
-def reveal_in_file_manager(path: Path) -> bool:
+
+def reveal_in_file_manager(path: Path) -> tuple[bool, str | None]:
     """Best-effort: opens the OS file manager with `path` selected/shown.
 
-    Returns False (never raises) when unsupported on this platform or the
+    Returns (ok, warning). `warning="path_too_long"` means we fell back to
+    opening the parent folder instead of selecting the exact file. Returns
+    (False, None) (never raises) when unsupported on this platform or the
     launch fails -- callers treat that as "not available here", not an
     error worth surfacing as a 500.
     """
     try:
         if sys.platform == "win32":
+            if len(str(path)) >= WINDOWS_PATH_WARN_LENGTH:
+                subprocess.Popen(f'explorer "{path.parent}"')
+                return True, "path_too_long"
             # Explorer's /select switch is notoriously picky about
             # quoting; passing one pre-quoted string (not a list) is what
             # reliably works on Windows, including paths with spaces --
             # subprocess passes a string argument straight through to
             # CreateProcess there rather than re-quoting it.
             subprocess.Popen(f'explorer /select,"{path}"')
-            return True
+            return True, None
         if sys.platform == "darwin":
             subprocess.Popen(["open", "-R", str(path)])
-            return True
-        return False  # no single standard "reveal" command across Linux file managers
+            return True, None
+        return False, None  # no single standard "reveal" command across Linux file managers
     except OSError:
-        return False
+        return False, None
