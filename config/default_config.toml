@@ -105,6 +105,14 @@ ocr_confidence_threshold = 0.55
 # document/section" pointers, not content extraction from those formats.
 pdf_extensions = [".pdf"]
 image_extensions = [".jpg", ".jpeg", ".png", ".tif", ".tiff"]
+# "Open file" 버튼이 실제로 이 파일들을 브라우저를 통해 여는(HTTP로 바이트
+# 전송) 방식이 정상 동작하는 확장자 목록. 그 외 확장자는 "Open file" 링크
+# 자체를 숨기고 "Show in folder"만 보여준다 -- 사내 문서보안(DRM)
+# 솔루션이 탐색기에서 직접 여는 것만 인식하고, 브라우저가 다운로드
+# 폴더에 만든 별도 사본은 열기를 거부하는 경우가 많기 때문이다(실사용
+# 테스트로 확인됨). 어떤 확장자가 실제로 막히는지는 회사 보안 정책에
+# 따라 다르므로, 실사용 결과에 맞게 이 목록을 조정하면 된다.
+direct_open_extensions = [".pdf", ".jpg", ".jpeg", ".png", ".tif", ".tiff", ".hwpx"]
 
 [llm]
 # Empty by default -> NoOpBackend is selected, tool works fully offline.

@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 import pytest
+from werkzeug.datastructures import MultiDict
 
 from projectdb_search.config import AppConfig
 from projectdb_search.search import feedback
@@ -194,12 +195,135 @@ def test_search_shows_candidate_count_hint_when_pool_exceeds_200(tmp_path: Path,
     assert "showing 200" in body
 
 
+def _client_with_records(tmp_path: Path, app_config: AppConfig, records: list):
+    """Like _client_with_many_tied_documents, but for tests that need
+    specific per-record fields (file_ext, file_path folder, indexed_at)
+    rather than a uniform generated batch.
+    """
+    from projectdb_search.storage import index_store
+    from projectdb_search.storage.inverted_index import build_inverted_index, save_inverted_index
+
+    index_dir = tmp_path / "index"
+    log_dir = tmp_path / "logs"
+    corpus_root = tmp_path / "raw_docs"
+    corpus_root.mkdir()
+
+    for record in records:
+        index_store.write_record(index_dir, record)
+    index_store.save_corpus_root(index_dir, corpus_root)
+    save_inverted_index(index_dir, build_inverted_index(records))
+
+    app = create_app(index_dir, log_dir, corpus_root, app_config)
+    app.testing = True
+    return app.test_client()
+
+
 def test_search_hides_no_hint_when_the_full_pool_fits(
     corpus_root: Path, built_index: tuple[Path, Path, InvertedIndex], app_config: AppConfig
 ):
     client, _ = _client(corpus_root, built_index, app_config)
     resp = client.post("/search", data={"query": "isometric drawing for HX-203"})
     assert b"document(s) matched" not in resp.data
+
+
+def _tied_docs_of_mixed_types(tmp_path: Path, app_config: AppConfig):
+    """A PDF (in direct_open_extensions) and a .docx (not) that both match
+    the same query -- exercises the Open-file-link-vs-hint split without
+    depending on any single doc's rank among the results.
+    """
+    from projectdb_search.models import DocumentRecord
+
+    records = [
+        DocumentRecord(
+            doc_id="pdf_doc", file_path="RiversidePlant/report.pdf", file_name="report.pdf", file_ext=".pdf",
+            project_name="Riverside Plant", doc_type="datasheet", year=2020,
+            department=None, equipment_tag=None, keywords=["data", "sheet"],
+            indexed_at="2024-01-01T00:00:00+00:00",
+        ),
+        DocumentRecord(
+            doc_id="docx_doc", file_path="CompressorStation/report.docx", file_name="report.docx", file_ext=".docx",
+            project_name="Riverside Plant", doc_type="datasheet", year=2020,
+            department=None, equipment_tag=None, keywords=["data", "sheet"],
+            indexed_at="2024-06-01T00:00:00+00:00",
+        ),
+    ]
+    return _client_with_records(tmp_path, app_config, records), records
+
+
+def test_open_file_link_hidden_for_non_direct_open_extensions(tmp_path: Path, app_config: AppConfig):
+    client, _ = _tied_docs_of_mixed_types(tmp_path, app_config)
+    body = client.post("/search", data={"query": "Data sheet"}).data.decode()
+
+    assert '<a href="/file/pdf_doc"' in body
+    assert '<a href="/file/docx_doc"' not in body
+    assert "Open via folder" in body
+    # Show in folder must still work for both, regardless of direct_open.
+    assert body.count('data-doc-id="pdf_doc"') >= 1
+    assert body.count('data-doc-id="docx_doc"') >= 1
+
+
+def test_sort_by_newest_reorders_results_in_the_web_response(tmp_path: Path, app_config: AppConfig):
+    client, records = _tied_docs_of_mixed_types(tmp_path, app_config)
+    body = client.post("/search", data={"query": "Data sheet", "sort_by": "newest"}).data.decode()
+
+    docx_pos = body.index("CompressorStation/report.docx")
+    pdf_pos = body.index("RiversidePlant/report.pdf")
+    assert docx_pos < pdf_pos, "docx (indexed later) should sort before pdf under sort_by=newest"
+    assert 'value="newest" selected' in body
+
+
+def test_sort_by_defaults_to_relevance_and_preserves_selection(tmp_path: Path, app_config: AppConfig):
+    client, _ = _tied_docs_of_mixed_types(tmp_path, app_config)
+    resp = client.post("/search", data={"query": "Data sheet"})
+    assert resp.status_code == 200
+    assert 'value="relevance" selected' in resp.data.decode()
+
+
+def test_extensions_and_folders_are_listed_in_the_narrow_search_form(tmp_path: Path, app_config: AppConfig):
+    client, _ = _tied_docs_of_mixed_types(tmp_path, app_config)
+    body = client.get("/").data.decode()
+
+    assert 'id="folder-options"' in body
+    assert "RiversidePlant" in body
+    assert "CompressorStation" in body
+    assert '.pdf' in body
+    assert '.docx' in body
+
+
+def test_ext_filter_narrows_web_search_results(tmp_path: Path, app_config: AppConfig):
+    client, _ = _tied_docs_of_mixed_types(tmp_path, app_config)
+    body = client.post("/search", data={"query": "Data sheet", "ext_filter": ".pdf"}).data.decode()
+
+    assert "RiversidePlant/report.pdf" in body
+    assert "CompressorStation/report.docx" not in body
+    assert 'value=".pdf" selected' in body
+
+
+def test_folder_filter_narrows_web_search_results(tmp_path: Path, app_config: AppConfig):
+    client, _ = _tied_docs_of_mixed_types(tmp_path, app_config)
+    body = client.post(
+        "/search", data=MultiDict([("query", "Data sheet"), ("folder", "RiversidePlant")])
+    ).data.decode()
+
+    assert "RiversidePlant/report.pdf" in body
+    assert "CompressorStation/report.docx" not in body
+    assert 'data-folder="RiversidePlant"' in body  # chip preserved after search
+
+
+def test_folder_filter_with_multiple_folders_is_ored(tmp_path: Path, app_config: AppConfig):
+    client, _ = _tied_docs_of_mixed_types(tmp_path, app_config)
+    body = client.post(
+        "/search", data=MultiDict([("query", "Data sheet"), ("folder", "RiversidePlant"), ("folder", "CompressorStation")])
+    ).data.decode()
+
+    assert "RiversidePlant/report.pdf" in body
+    assert "CompressorStation/report.docx" in body
+
+
+def test_folder_picker_hidden_for_a_single_folder_corpus(tmp_path: Path, app_config: AppConfig):
+    client = _client_with_many_tied_documents(tmp_path, app_config, count=5)
+    body = client.get("/").data.decode()
+    assert 'id="folder-picker"' not in body
 
 
 def test_feedback_endpoint_logs_entry(

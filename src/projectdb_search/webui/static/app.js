@@ -305,3 +305,62 @@ document.addEventListener("click", function (event) {
       btn.insertAdjacentHTML("afterend", '<span class="feedback-error"> (failed to log)</span>');
     });
 });
+
+function initFolderPicker() {
+  const picker = document.getElementById("folder-picker");
+  if (!picker) return;
+
+  const chips = document.getElementById("folder-chips");
+  const input = document.getElementById("folder-input");
+  const known = Array.from(document.querySelectorAll("#folder-options option")).map(function (o) {
+    return o.value;
+  });
+
+  function addChip(folder) {
+    folder = folder.trim();
+    if (!folder || chips.querySelector('[data-folder="' + CSS.escape(folder) + '"]')) {
+      input.value = "";
+      return;
+    }
+    const chip = document.createElement("span");
+    chip.className = "folder-chip";
+    chip.dataset.folder = folder;
+    chip.appendChild(document.createTextNode(folder + " "));
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "folder-chip-remove";
+    remove.setAttribute("aria-label", "Remove " + folder);
+    remove.textContent = "×";
+    chip.appendChild(remove);
+
+    const hidden = document.createElement("input");
+    hidden.type = "hidden";
+    hidden.name = "folder";
+    hidden.value = folder;
+    chip.appendChild(hidden);
+
+    chips.appendChild(chip);
+    input.value = "";
+  }
+
+  // Only a value that's actually in the <datalist> (typed in full, or
+  // picked from the browser's own autocomplete dropdown) becomes a chip --
+  // this keeps stray typed text from turning into a bogus folder filter.
+  input.addEventListener("keydown", function (event) {
+    if (event.key === "Enter" && known.includes(input.value.trim())) {
+      event.preventDefault(); // don't submit the whole search form
+      addChip(input.value);
+    }
+  });
+  input.addEventListener("change", function () {
+    if (known.includes(input.value)) addChip(input.value);
+  });
+
+  chips.addEventListener("click", function (event) {
+    const btn = event.target.closest(".folder-chip-remove");
+    if (btn) btn.closest(".folder-chip").remove();
+  });
+}
+
+document.addEventListener("DOMContentLoaded", initFolderPicker);

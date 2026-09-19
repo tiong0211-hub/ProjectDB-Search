@@ -199,3 +199,187 @@ def test_tied_documents_sort_deterministically_by_file_path(app_config: AppConfi
     assert len(first_paths) > 1, "expected a genuinely tied candidate set"
     assert first_paths == second_paths
     assert first_paths == sorted(first_paths)
+
+
+def _write_and_build_index(index_dir: Path, records: list[DocumentRecord]):
+    for record in records:
+        index_store.write_record(index_dir, record)
+    inverted = build_inverted_index(records)
+    save_inverted_index(index_dir, inverted)
+    return inverted
+
+
+def _tied_query(app_config: AppConfig):
+    from projectdb_search.indexer.filename_parser import FilenameParser
+    from projectdb_search.search.query_parser import parse_query
+
+    parser = FilenameParser(app_config)
+    return parse_query("Data sheet", parser)
+
+
+def test_sort_by_newest_orders_tied_results_by_indexed_at(app_config: AppConfig, tmp_path: Path):
+    records = [
+        DocumentRecord(
+            doc_id=f"doc{i:02d}",
+            file_path=f"synthetic/{i:02d}.pdf",
+            file_name=f"{i:02d}.pdf",
+            file_ext=".pdf",
+            project_name="Riverside Plant",
+            doc_type="datasheet",
+            year=2020,
+            department=None,
+            equipment_tag=None,
+            keywords=["data", "sheet"],
+            indexed_at=f"2024-01-{i + 1:02d}T00:00:00+00:00",
+        )
+        for i in range(5)
+    ]
+    inverted = _write_and_build_index(tmp_path / "index", records)
+    query = _tied_query(app_config)
+
+    result = run_search(query, tmp_path / "index", inverted, app_config.ranking, NoOpBackend(), top_n=5, sort_by="newest")
+
+    assert [m.record.doc_id for m in result.top] == ["doc04", "doc03", "doc02", "doc01", "doc00"]
+
+
+def test_sort_by_relevance_is_unaffected_by_indexed_at(app_config: AppConfig, tmp_path: Path):
+    records = [
+        DocumentRecord(
+            doc_id=f"doc{i:02d}",
+            file_path=f"synthetic/{i:02d}.pdf",
+            file_name=f"{i:02d}.pdf",
+            file_ext=".pdf",
+            project_name="Riverside Plant",
+            doc_type="datasheet",
+            year=2020,
+            department=None,
+            equipment_tag=None,
+            keywords=["data", "sheet"],
+            indexed_at=f"2024-01-{i + 1:02d}T00:00:00+00:00",
+        )
+        for i in range(5)
+    ]
+    inverted = _write_and_build_index(tmp_path / "index", records)
+    query = _tied_query(app_config)
+
+    result = run_search(query, tmp_path / "index", inverted, app_config.ranking, NoOpBackend(), top_n=5)
+
+    # Tied on score, so falls back to the deterministic file_path tie-break
+    # regardless of indexed_at -- unaffected by the newest-first feature.
+    assert [m.record.file_path for m in result.top] == sorted(r.file_path for r in records)
+
+
+def test_sort_by_file_type_groups_by_extension_then_relevance(app_config: AppConfig, tmp_path: Path):
+    records = [
+        DocumentRecord(
+            doc_id="pdf_b", file_path="b.pdf", file_name="b.pdf", file_ext=".pdf",
+            project_name="Riverside Plant", doc_type="datasheet", year=2020,
+            department=None, equipment_tag=None, keywords=["data", "sheet"],
+        ),
+        DocumentRecord(
+            doc_id="pdf_a", file_path="a.pdf", file_name="a.pdf", file_ext=".pdf",
+            project_name="Riverside Plant", doc_type="datasheet", year=2020,
+            department=None, equipment_tag=None, keywords=["data", "sheet", "extra"],
+        ),
+        DocumentRecord(
+            doc_id="docx_a", file_path="a.docx", file_name="a.docx", file_ext=".docx",
+            project_name="Riverside Plant", doc_type="datasheet", year=2020,
+            department=None, equipment_tag=None, keywords=["data", "sheet"],
+        ),
+    ]
+    inverted = _write_and_build_index(tmp_path / "index", records)
+    query = _tied_query(app_config)
+
+    result = run_search(
+        query, tmp_path / "index", inverted, app_config.ranking, NoOpBackend(), top_n=3, sort_by="file_type"
+    )
+
+    # .docx group sorts before .pdf alphabetically; within .pdf, pdf_a
+    # scores higher (extra keyword hit) so it comes before pdf_b.
+    assert [m.record.doc_id for m in result.top] == ["docx_a", "pdf_a", "pdf_b"]
+
+
+def test_extensions_filter_narrows_results(app_config: AppConfig, tmp_path: Path):
+    records = [
+        DocumentRecord(
+            doc_id="pdf1", file_path="a.pdf", file_name="a.pdf", file_ext=".pdf",
+            project_name="Riverside Plant", doc_type="datasheet", year=2020,
+            department=None, equipment_tag=None, keywords=["data", "sheet"],
+        ),
+        DocumentRecord(
+            doc_id="docx1", file_path="a.docx", file_name="a.docx", file_ext=".docx",
+            project_name="Riverside Plant", doc_type="datasheet", year=2020,
+            department=None, equipment_tag=None, keywords=["data", "sheet"],
+        ),
+    ]
+    inverted = _write_and_build_index(tmp_path / "index", records)
+    query = _tied_query(app_config)
+
+    result = run_search(
+        query, tmp_path / "index", inverted, app_config.ranking, NoOpBackend(), top_n=5, extensions={".pdf"}
+    )
+
+    assert [m.record.doc_id for m in result.top] == ["pdf1"]
+    assert result.candidate_count == 1  # post-filter, not the pre-filter candidate pool of 2
+
+
+def test_folder_queries_filters_by_top_level_folder_with_or_and_prefix_match(
+    app_config: AppConfig, tmp_path: Path
+):
+    records = [
+        DocumentRecord(
+            doc_id="riverside", file_path="RiversidePlant/a.pdf", file_name="a.pdf", file_ext=".pdf",
+            project_name="Riverside Plant", doc_type="datasheet", year=2020,
+            department=None, equipment_tag=None, keywords=["data", "sheet"],
+        ),
+        DocumentRecord(
+            doc_id="compressor", file_path="CompressorStation/a.pdf", file_name="a.pdf", file_ext=".pdf",
+            project_name="Riverside Plant", doc_type="datasheet", year=2020,
+            department=None, equipment_tag=None, keywords=["data", "sheet"],
+        ),
+        DocumentRecord(
+            doc_id="unsorted", file_path="Unsorted/a.pdf", file_name="a.pdf", file_ext=".pdf",
+            project_name="Riverside Plant", doc_type="datasheet", year=2020,
+            department=None, equipment_tag=None, keywords=["data", "sheet"],
+        ),
+    ]
+    inverted = _write_and_build_index(tmp_path / "index", records)
+    query = _tied_query(app_config)
+
+    # Case-insensitive prefix match, OR'd across multiple folder queries.
+    result = run_search(
+        query, tmp_path / "index", inverted, app_config.ranking, NoOpBackend(), top_n=5,
+        folder_queries=["riverside", "Compressor"],
+    )
+
+    assert {m.record.doc_id for m in result.top} == {"riverside", "compressor"}
+    assert result.candidate_count == 2
+
+
+def test_extensions_and_folder_queries_combine_as_intersection(app_config: AppConfig, tmp_path: Path):
+    records = [
+        DocumentRecord(
+            doc_id="match", file_path="RiversidePlant/a.pdf", file_name="a.pdf", file_ext=".pdf",
+            project_name="Riverside Plant", doc_type="datasheet", year=2020,
+            department=None, equipment_tag=None, keywords=["data", "sheet"],
+        ),
+        DocumentRecord(
+            doc_id="wrong_folder", file_path="Unsorted/a.pdf", file_name="a.pdf", file_ext=".pdf",
+            project_name="Riverside Plant", doc_type="datasheet", year=2020,
+            department=None, equipment_tag=None, keywords=["data", "sheet"],
+        ),
+        DocumentRecord(
+            doc_id="wrong_ext", file_path="RiversidePlant/a.docx", file_name="a.docx", file_ext=".docx",
+            project_name="Riverside Plant", doc_type="datasheet", year=2020,
+            department=None, equipment_tag=None, keywords=["data", "sheet"],
+        ),
+    ]
+    inverted = _write_and_build_index(tmp_path / "index", records)
+    query = _tied_query(app_config)
+
+    result = run_search(
+        query, tmp_path / "index", inverted, app_config.ranking, NoOpBackend(), top_n=5,
+        extensions={".pdf"}, folder_queries=["Riverside"],
+    )
+
+    assert [m.record.doc_id for m in result.top] == ["match"]

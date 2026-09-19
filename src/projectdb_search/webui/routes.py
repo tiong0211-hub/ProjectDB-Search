@@ -18,6 +18,7 @@ from pathlib import Path
 from flask import Flask, abort, current_app, jsonify, render_template, request, send_file
 
 from projectdb_search import runtime_paths
+from projectdb_search.config import AppConfig
 from projectdb_search.indexer import logging_utils
 from projectdb_search.indexer.filename_parser import FilenameParser
 from projectdb_search.indexer.pipeline import run_deep_scan, run_pipeline
@@ -27,7 +28,7 @@ from projectdb_search.search.query_parser import parse_query
 from projectdb_search.search.ranker import SearchResult, build_justification
 from projectdb_search.search.ranker import search as run_search
 from projectdb_search.storage import index_store
-from projectdb_search.storage.inverted_index import load_inverted_index_cached
+from projectdb_search.storage.inverted_index import InvertedIndex, load_inverted_index_cached
 from projectdb_search.webui.reveal import reveal_in_file_manager
 
 # Deep-scan (PDF-text/OCR fallback) runs in a background thread so the
@@ -110,6 +111,58 @@ def _clamp_top_n(raw: str | None) -> int:
     except (TypeError, ValueError):
         return DEFAULT_VISIBLE_TOP_N
     return max(1, min(value, MAX_TOP_N))
+
+
+_SORT_BY_VALUES = {"relevance", "newest", "file_type"}
+
+
+def _clamp_sort_by(raw: str | None) -> str:
+    return raw if raw in _SORT_BY_VALUES else "relevance"
+
+
+def _distinct_extensions(inverted: InvertedIndex) -> list[tuple[str, int]]:
+    """(extension, count) pairs across the index, most common first --
+    backs the "File type" narrow-search dropdown. Computed from the
+    already-in-memory `inverted.documents` snapshot, no disk I/O.
+    """
+    counts: dict[str, int] = {}
+    for doc in inverted.documents.values():
+        ext = doc.get("file_ext") or "(no extension)"
+        counts[ext] = counts.get(ext, 0) + 1
+    return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+
+
+def _top_level_folders(inverted: InvertedIndex) -> list[tuple[str, int]]:
+    """(top-level folder name, count) pairs across the index, most common
+    first -- backs the folder narrow-search picker. Files sitting directly
+    at the corpus root (no subfolder) don't contribute an entry -- there's
+    no real folder to filter them by, and treating each root filename as
+    its own "folder" would flood the picker with one-off junk. A corpus
+    with no subfolders at all yields an empty list, which the template
+    uses to hide the picker entirely.
+    """
+    counts: dict[str, int] = {}
+    for doc in inverted.documents.values():
+        file_path = doc.get("file_path")
+        parts = Path(file_path).parts if file_path else ()
+        if len(parts) < 2:
+            continue
+        folder = parts[0]
+        counts[folder] = counts.get(folder, 0) + 1
+    return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+
+
+def _search_scope_context(inverted: InvertedIndex | None) -> dict:
+    """Shared template context for the "Narrow search" controls -- needed
+    on every page that renders search.html's form (with or without a
+    query), not just the results page.
+    """
+    if inverted is None:
+        return {"extensions": [], "top_level_folders": []}
+    return {
+        "extensions": _distinct_extensions(inverted),
+        "top_level_folders": _top_level_folders(inverted),
+    }
 
 
 def _count_pending_deep_scan(index_dir: Path) -> int:
@@ -216,6 +269,7 @@ def register_routes(app: Flask) -> None:
             last_indexed=_format_built_at(inverted.built_at) if inverted else None,
             indexed_root=str(corpus_root) if corpus_root else None,
             selected_top_n=DEFAULT_VISIBLE_TOP_N,
+            **_search_scope_context(inverted),
         )
 
     @app.post("/search")
@@ -228,20 +282,32 @@ def register_routes(app: Flask) -> None:
         corpus_root = current_app.config["CORPUS_ROOT"] or index_store.load_corpus_root(index_dir)
         indexed_root = str(corpus_root) if corpus_root else None
         selected_top_n = _clamp_top_n(request.form.get("top_n"))
+        selected_sort_by = _clamp_sort_by(request.form.get("sort_by"))
+        scope_context = _search_scope_context(inverted)
+
+        ext_filter_raw = request.form.get("ext_filter", "all")
+        extensions_filter = None if ext_filter_raw in ("all", "") else {ext_filter_raw}
+        selected_folders = [f for f in request.form.getlist("folder") if f.strip()] or None
 
         query_text = request.form.get("query", "").strip()
         if not query_text:
             return render_template(
                 "search.html", query="", results=None, has_index=True,
                 last_indexed=last_indexed, indexed_root=indexed_root,
-                selected_top_n=selected_top_n,
+                selected_top_n=selected_top_n, selected_sort_by=selected_sort_by,
+                selected_ext_filter=ext_filter_raw if extensions_filter else None,
+                selected_folders=selected_folders,
+                **scope_context,
             )
 
-        result = _run_search(query_text)
+        result = _run_search(
+            query_text, sort_by=selected_sort_by, extensions=extensions_filter, folder_queries=selected_folders
+        )
+        config = current_app.config["APP_CONFIG"]
         return render_template(
             "search.html",
             query=query_text,
-            results=_build_results_view(result),
+            results=_build_results_view(result, config),
             has_index=True,
             last_indexed=last_indexed,
             indexed_root=indexed_root,
@@ -249,6 +315,10 @@ def register_routes(app: Flask) -> None:
             used_llm_rerank=result.used_llm_rerank,
             candidate_count=result.candidate_count,
             selected_top_n=selected_top_n,
+            selected_sort_by=selected_sort_by,
+            selected_ext_filter=ext_filter_raw if extensions_filter else None,
+            selected_folders=selected_folders,
+            **scope_context,
             search_context={
                 "query": query_text,
                 "top_doc_ids": [m.record.doc_id for m in result.top],
@@ -495,7 +565,12 @@ def register_routes(app: Flask) -> None:
         return render_template("review_queue.html", entries=entries)
 
 
-def _run_search(query_text: str) -> SearchResult:
+def _run_search(
+    query_text: str,
+    sort_by: str = "relevance",
+    extensions: set[str] | None = None,
+    folder_queries: list[str] | None = None,
+) -> SearchResult:
     index_dir = current_app.config["INDEX_DIR"]
     config = current_app.config["APP_CONFIG"]
     inverted = load_inverted_index_cached(index_dir)
@@ -509,16 +584,21 @@ def _run_search(query_text: str) -> SearchResult:
     # count the user picked -- scoring the full candidate set costs the
     # same either way (see ranker.search()), so the extra rows are free to
     # have on hand for "show more" (results.html) without another request.
-    return run_search(parsed_query, index_dir, inverted, config.ranking, llm_backend, top_n=MAX_TOP_N)
+    return run_search(
+        parsed_query, index_dir, inverted, config.ranking, llm_backend, top_n=MAX_TOP_N,
+        sort_by=sort_by, extensions=extensions, folder_queries=folder_queries,
+    )
 
 
-def _build_results_view(result: SearchResult) -> list[dict]:
+def _build_results_view(result: SearchResult, config: AppConfig) -> list[dict]:
     return [
         {
             "doc_id": m.record.doc_id,
             "file_path": m.record.file_path,
             "score": m.score,
             "justification": build_justification(m),
+            "direct_open": Path(m.record.file_path).suffix.lower() in config.extraction.direct_open_extensions,
+            "indexed_at": _format_built_at(m.record.indexed_at),
         }
         for m in result.top
     ]

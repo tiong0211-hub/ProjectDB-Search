@@ -38,6 +38,7 @@ class ExtractionConfig:
     max_fallback_pages: int
     ocr_max_side_px: int
     deep_scan_workers: int
+    direct_open_extensions: set[str]
 
 
 @dataclass
@@ -90,6 +91,11 @@ def load_config(path: Path | None = None) -> AppConfig:
             max_fallback_pages=extraction_raw.get("max_fallback_pages", 2),
             ocr_max_side_px=extraction_raw.get("ocr_max_side_px", 2400),
             deep_scan_workers=extraction_raw.get("deep_scan_workers", 0),
+            direct_open_extensions=set(
+                extraction_raw.get(
+                    "direct_open_extensions", [".pdf", ".jpg", ".jpeg", ".png", ".tif", ".tiff", ".hwpx"]
+                )
+            ),
         ),
         raw=raw,
     )

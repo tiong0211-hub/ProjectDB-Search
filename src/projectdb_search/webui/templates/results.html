@@ -14,16 +14,31 @@
       Add a more specific term (equipment tag, project name) to narrow it down.
     </p>
     {% endif %}
+    {% if selected_ext_filter or selected_folders %}
+    <p class="hint">
+      Filtered:
+      {% if selected_ext_filter %}{{ selected_ext_filter }}{% endif %}
+      {% if selected_ext_filter and selected_folders %}&middot;{% endif %}
+      {% if selected_folders %}folders: {{ selected_folders|join(", ") }}{% endif %}
+    </p>
+    {% endif %}
     <input type="hidden" id="search-context" value='{{ search_context | tojson }}'>
     <ol class="result-list">
       {% for r in results %}
       {% set visible_top_n = selected_top_n or 25 %}
       <li class="result-item"
           {% if loop.index0 >= visible_top_n %}hidden data-batch="{{ (loop.index0 - visible_top_n) // 25 }}"{% endif %}>
-        <div class="result-path">{{ r.file_path }} <span class="score">score: {{ "%.1f"|format(r.score) }}</span></div>
+        <div class="result-path">
+          {{ r.file_path }}
+          <span class="score">score: {{ "%.1f"|format(r.score) }}{% if r.indexed_at %} &middot; indexed: {{ r.indexed_at }}{% endif %}</span>
+        </div>
         <div class="result-justification">{{ r.justification }}</div>
         <div class="result-actions">
+          {% if r.direct_open %}
           <a href="/file/{{ r.doc_id }}" target="_blank" rel="noopener">Open file</a>
+          {% else %}
+          <span class="hint">Open via folder</span>
+          {% endif %}
           <button class="reveal-btn" type="button" data-doc-id="{{ r.doc_id }}">Show in folder</button>
           <button class="feedback-btn correct" data-doc-id="{{ r.doc_id }}" data-correct="true">Correct</button>
           <button class="feedback-btn incorrect" data-doc-id="{{ r.doc_id }}" data-correct="false">Not this one</button>

@@ -251,6 +251,11 @@ def _candidate_record(index_dir: Path, inverted: InvertedIndex, doc_id: str) -> 
     return load_record(index_dir, doc_id)
 
 
+def _top_level_folder(file_path: str) -> str:
+    parts = Path(file_path).parts
+    return parts[0] if parts else file_path
+
+
 def search(
     query: ParsedQuery,
     index_dir: Path,
@@ -258,6 +263,9 @@ def search(
     ranking: RankingConfig,
     llm_backend: LLMBackend,
     top_n: int = 3,
+    sort_by: str = "relevance",  # "relevance" | "newest" | "file_type"
+    extensions: set[str] | None = None,       # e.g. {".pdf"} -- None = no filter
+    folder_queries: list[str] | None = None,  # e.g. ["Riverside"] -- OR of case-insensitive prefixes
 ) -> SearchResult:
     # Built once and reused for both candidate gathering and scoring --
     # see QueryPlan for why this matters so much at scale.
@@ -269,10 +277,23 @@ def search(
         # scoring the whole corpus rather than returning nothing.
         candidate_ids = inverted.all_doc_ids()
 
-    scored = [
-        score_document(query, _candidate_record(index_dir, inverted, doc_id), ranking, plan)
-        for doc_id in candidate_ids
-    ]
+    folder_prefixes = (
+        [f.strip().lower() for f in folder_queries if f.strip()] if folder_queries else None
+    )
+
+    # Filters applied before scoring, not after -- narrowing the candidate
+    # set here means less work below, not just a smaller displayed slice.
+    scored = []
+    for doc_id in candidate_ids:
+        record = _candidate_record(index_dir, inverted, doc_id)
+        if extensions is not None and record.file_ext not in extensions:
+            continue
+        if folder_prefixes is not None:
+            top_folder = _top_level_folder(record.file_path).lower()
+            if not any(top_folder.startswith(prefix) for prefix in folder_prefixes):
+                continue
+        scored.append(score_document(query, record, ranking, plan))
+
     # Secondary key breaks ties deterministically -- candidate_ids is a
     # set, so without this, which of several equally-scored documents
     # (e.g. hundreds sharing a generic doc_type like "datasheet") lands in
@@ -287,10 +308,18 @@ def search(
         top = llm_backend.rerank(query.raw_query, scored[:10])[:top_n]
         used_llm_rerank = True
 
+    # Applied last, to the already-decided top slice only -- ambiguity and
+    # LLM re-ranking above still operate on relevance order regardless of
+    # how the final list is displayed.
+    if sort_by == "newest":
+        top = sorted(top, key=lambda m: m.record.indexed_at, reverse=True)
+    elif sort_by == "file_type":
+        top = sorted(top, key=lambda m: (m.record.file_ext, -m.score, m.record.file_path))
+
     return SearchResult(
         query=query,
         top=top,
         ambiguous=ambiguous,
-        candidate_count=len(candidate_ids),
+        candidate_count=len(scored),  # post-filter count -- was len(candidate_ids)
         used_llm_rerank=used_llm_rerank,
     )

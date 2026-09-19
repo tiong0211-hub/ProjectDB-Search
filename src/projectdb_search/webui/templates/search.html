@@ -22,7 +22,48 @@
     <option value="{{ n }}" {% if (selected_top_n or 25) == n %}selected{% endif %}>{{ n }}{% if n == 200 %} (max){% endif %}</option>
     {% endfor %}
   </select>
+  <select name="sort_by" class="sort-by-select" title="Sort order">
+    <option value="relevance" {% if (selected_sort_by or "relevance") == "relevance" %}selected{% endif %}>Relevance</option>
+    <option value="newest" {% if selected_sort_by == "newest" %}selected{% endif %}>Newest first</option>
+    <option value="file_type" {% if selected_sort_by == "file_type" %}selected{% endif %}>File type</option>
+  </select>
   <button type="submit" class="search-button">Search</button>
+
+  <details class="search-scope">
+    <summary>Narrow search</summary>
+    <label>
+      File type
+      <select name="ext_filter">
+        <option value="all" {% if not selected_ext_filter %}selected{% endif %}>All types</option>
+        {% for ext, count in extensions %}
+        <option value="{{ ext }}" {% if selected_ext_filter == ext %}selected{% endif %}>{{ ext }} ({{ count }})</option>
+        {% endfor %}
+      </select>
+    </label>
+    {% if top_level_folders|length > 1 %}
+    <label>Folder</label>
+    <div class="folder-picker" id="folder-picker">
+      <span class="folder-chips" id="folder-chips">
+        {% for folder in selected_folders or [] %}
+        <span class="folder-chip" data-folder="{{ folder }}">
+          {{ folder }}
+          <button type="button" class="folder-chip-remove" aria-label="Remove {{ folder }}">&times;</button>
+          <input type="hidden" name="folder" value="{{ folder }}">
+        </span>
+        {% endfor %}
+      </span>
+      <input
+        type="text" id="folder-input" list="folder-options" autocomplete="off"
+        placeholder="{% if selected_folders %}Add another folder…{% else %}All folders — type to narrow{% endif %}"
+      >
+      <datalist id="folder-options">
+        {% for folder, count in top_level_folders %}
+        <option value="{{ folder }}">{{ folder }} ({{ count }})</option>
+        {% endfor %}
+      </datalist>
+    </div>
+    {% endif %}
+  </details>
 </form>
 
 {% if results is not none %}
